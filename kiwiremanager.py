@@ -22,19 +22,15 @@ class Application:
                                ('保存', self.save), ('名前を付けて保存', lambda: self.save(True)),
                                ('CSV出力', self.export)]:
             ttk.Button(toolbar, text=title, command=command).pack(side='left', padx=3)
-        numbering = ttk.LabelFrame(root, text='自動採番（既存線番を保持し、未採番のみ一覧順に割当）', padding=10)
+        numbering = ttk.LabelFrame(root, text='ネットの初出順に001〜999を割当。同じネットは線番を共有。未設定は保留します。', padding=10)
         numbering.pack(fill='x', padx=10)
-        self.prefix, self.start, self.digits = tk.StringVar(), tk.StringVar(value='1'), tk.StringVar(value='3')
-        for title, variable in [('接頭辞', self.prefix), ('開始番号', self.start), ('最小桁数', self.digits)]:
-            ttk.Label(numbering, text=title).pack(side='left', padx=4)
-            ttk.Entry(numbering, textvariable=variable, width=12).pack(side='left')
-            variable.trace_add('write', self.changed)
-        ttk.Button(numbering, text='自動採番', command=self.number).pack(side='left', padx=12)
+        self.numbering_settings = Numbering()
+        ttk.Button(numbering, text='3桁通し番号を採番', command=self.number).pack(side='left', padx=12)
         ttk.Button(numbering, text='検証', command=self.check).pack(side='left')
         table_frame = ttk.Frame(root, padding=10)
         table_frame.pack(fill='both', expand=True)
-        self.columns = ('number', 'source_device', 'source_terminal', 'target_device', 'target_terminal')
-        self.labels = ('線番', '接続元機器', '接続元端子', '接続先機器', '接続先端子')
+        self.columns = ('net_name', 'number', 'source_device', 'source_terminal', 'target_device', 'target_terminal')
+        self.labels = ('ネット名', '線番（自動）', '接続元機器', '接続元端子', '接続先機器', '接続先端子')
         self.table = ttk.Treeview(table_frame, columns=self.columns, show='headings', selectmode='browse')
         for column, title in zip(self.columns, self.labels):
             self.table.heading(column, text=title)
@@ -44,14 +40,14 @@ class Application:
         self.table.pack(side='left', fill='both', expand=True)
         scrollbar.pack(side='right', fill='y')
         self.table.bind('<<TreeviewSelect>>', self.select)
-        editor = ttk.LabelFrame(root, text='電線入力（線番は空欄で登録できます）', padding=10)
+        editor = ttk.LabelFrame(root, text='電線入力（登録・ネット変更後に「3桁通し番号を採番」を押してください）', padding=10)
         editor.pack(fill='x', padx=10)
         self.inputs = {}
         for i, (column, title) in enumerate(zip(self.columns, self.labels)):
             ttk.Label(editor, text=title).grid(row=0, column=i, sticky='w')
             variable = tk.StringVar()
             self.inputs[column] = variable
-            ttk.Entry(editor, textvariable=variable, width=19).grid(row=1, column=i, padx=(0, 8), sticky='ew')
+            ttk.Entry(editor, textvariable=variable, width=15, state='readonly' if column == 'number' else 'normal').grid(row=1, column=i, padx=(0, 8), sticky='ew')
             editor.columnconfigure(i, weight=1)
         actions = ttk.Frame(root, padding=10)
         actions.pack(fill='x')
@@ -59,7 +55,7 @@ class Application:
                                ('入力クリア', self.clear)]:
             ttk.Button(actions, text=title, command=command).pack(side='left', padx=3)
         ttk.Label(actions, text='入力後は「追加」または「選択行を更新」で確定してください。').pack(side='left', padx=10)
-        self.status = tk.StringVar(value='電線を登録して自動採番してください。')
+        self.status = tk.StringVar(value='ネット名と電線の接続情報を入力してください。')
         ttk.Label(root, textvariable=self.status, padding=10).pack(fill='x')
 
     def changed(self, *args):
@@ -71,18 +67,13 @@ class Application:
         self.root.title(f'KiWire Manager — {self.path.name if self.path else "新規プロジェクト"}')
 
     def settings(self):
-        try:
-            settings = Numbering(self.prefix.get(), int(self.start.get()), int(self.digits.get()))
-        except ValueError as exc:
-            raise ValueError('開始番号と桁数は整数で指定してください。') from exc
-        settings.validate()
-        return settings
+        return self.numbering_settings
 
     def refresh(self):
         self.table.delete(*self.table.get_children())
         for wire in self.wires:
             self.table.insert('', 'end', iid=wire.wire_id, values=[getattr(wire, c) for c in self.columns])
-        self.status.set(f'電線 {len(self.wires)}本 / 未採番 {sum(not w.number for w in self.wires)}本')
+        self.status.set(f'電線 {len(self.wires)}本 / ネット名未設定 {sum(not w.net_name.strip() for w in self.wires)}本')
 
     def select(self, event=None):
         selection = self.table.selection()
@@ -100,10 +91,10 @@ class Application:
         values = {column: variable.get().strip() for column, variable in self.inputs.items()}
         if wire_id:
             values['wire_id'] = wire_id
+        previous = next((w for w in self.wires if w.wire_id == wire_id), None)
+        values['number'] = previous.number if previous and previous.net_name == values['net_name'] else ''
         wire = Wire(**values)
         errors = issues([wire], include_unnumbered=False)
-        if any(w.number and w.number == wire.number and w.wire_id != wire.wire_id for w in self.wires):
-            errors.append('その線番はすでに使用されています。')
         if errors:
             raise ValueError('\n'.join(errors))
         return wire
@@ -139,7 +130,7 @@ class Application:
                 self.changed()
             self.refresh()
             self.clear()
-            self.status.set(f'{count}本に線番を割り当てました。')
+            self.status.set(f'{count}本の線番を反映しました。ネット名未設定は{sum(not w.net_name.strip() for w in self.wires)}本です。')
         except ValueError as exc:
             messagebox.showerror('採番できません', str(exc), parent=self.root)
 
@@ -156,9 +147,7 @@ class Application:
     def new(self):
         if self.confirm_discard():
             self.wires, self.path = [], None
-            self.prefix.set('')
-            self.start.set('1')
-            self.digits.set('3')
+            self.numbering_settings = Numbering()
             self.refresh()
             self.clear()
             self.clean()
@@ -172,9 +161,7 @@ class Application:
         try:
             wires, settings = load_project(path)
             self.wires, self.path = wires, Path(path)
-            self.prefix.set(settings.prefix)
-            self.start.set(str(settings.start))
-            self.digits.set(str(settings.digits))
+            self.numbering_settings = settings
             self.refresh()
             self.clear()
             self.clean()

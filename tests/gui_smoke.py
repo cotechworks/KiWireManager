@@ -13,7 +13,7 @@ root = tk.Tk()
 root.withdraw()
 try:
     app = Application(root)
-    for key, value in {'source_device': 'PLC1', 'source_terminal': 'X0',
+    for key, value in {'net_name': '101', 'source_device': 'PLC1', 'source_terminal': 'X0',
                        'target_device': 'TB1', 'target_terminal': '1'}.items():
         app.inputs[key].set(value)
     app.add()
@@ -21,6 +21,13 @@ try:
     root.update()
     assert app.wires[0].number == '001'
     identity = app.wires[0].wire_id
+    for key, value in {'net_name': '101', 'source_device': 'TB1', 'source_terminal': '1', 'target_device': 'S1', 'target_terminal': '+'}.items():
+        app.inputs[key].set(value)
+    app.add()
+    app.number()
+    assert len(app.wires) == 2
+    assert app.wires[0].number == app.wires[1].number
+    assert app.wires[0].wire_id != app.wires[1].wire_id
     app.table.selection_set(identity)
     app.select()
     app.inputs['target_terminal'].set('2')
@@ -44,7 +51,7 @@ try:
         app.changed()
         with patch('kiwiremanager.messagebox.askyesnocancel', return_value=None):
             app.new()
-        assert len(app.wires) == 1
+        assert len(app.wires) == 2
     print('GUI smoke: PASS (add, number, edit, save, new, open, CSV, cancel)')
 finally:
     root.destroy()
