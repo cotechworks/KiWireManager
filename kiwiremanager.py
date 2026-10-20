@@ -1,9 +1,13 @@
 """Run with: python kiwiremanager.py"""
 import tkinter as tk
+import queue
+import threading
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from wire_model import Numbering, Wire, assign_numbers, export_csv, issues, load_project, save_project
+from kicad_import import import_folder
+from kicad_dialog import ImportDialog
 
 
 class Application:
@@ -18,6 +22,8 @@ class Application:
         root.protocol('WM_DELETE_WINDOW', self.close)
         toolbar = ttk.Frame(root, padding=10)
         toolbar.pack(fill='x')
+        self.import_button = ttk.Button(toolbar, text='KiCadフォルダー取込', command=self.import_kicad)
+        self.import_button.pack(side='left', padx=3)
         for title, command in [('新規', self.new), ('開く', self.open),
                                ('保存', self.save), ('名前を付けて保存', lambda: self.save(True)),
                                ('CSV出力', self.export)]:
@@ -61,6 +67,51 @@ class Application:
     def changed(self, *args):
         self.dirty = True
         self.root.title(f'KiWire Manager — {self.path.name if self.path else "新規プロジェクト"} *')
+
+    def import_kicad(self):
+        folder = filedialog.askdirectory(parent=self.root, title='回路図を含むフォルダーを選択（サブフォルダーも検索）')
+        if not folder:
+            return
+        self.import_button.configure(state='disabled')
+        self.status.set('回路図の階層とネットを読み込んでいます…')
+        output = queue.Queue()
+
+        def work():
+            try:
+                output.put((import_folder(folder), None))
+            except Exception as exc:
+                output.put((None, str(exc)))
+
+        def poll():
+            try:
+                result, error = output.get_nowait()
+            except queue.Empty:
+                self.root.after(100, poll)
+                return
+            self.import_button.configure(state='normal')
+            if error:
+                self.status.set('KiCad取込に失敗しました。電線一覧は変更していません。')
+                messagebox.showerror('KiCad取込エラー', error, parent=self.root)
+            else:
+                self.status.set(f'{len(result.sheets)}ファイル・{len(result.nets)}ネットを読み込みました。')
+                dialog = ImportDialog(self.root, result, self.add_imported_wire)
+                dialog.transient(self.root)
+                dialog.grab_set()
+
+        threading.Thread(target=work, daemon=True).start()
+        self.root.after(100, poll)
+
+    def add_imported_wire(self, wire):
+        endpoints = {(wire.source_device, wire.source_terminal), (wire.target_device, wire.target_terminal)}
+        for existing in self.wires:
+            other = {(existing.source_device, existing.source_terminal), (existing.target_device, existing.target_terminal)}
+            if existing.net_name == wire.net_name and endpoints == other:
+                messagebox.showinfo('電線登録', '同じ端子間の電線は登録済みです。', parent=self.root)
+                return False
+        self.wires.append(wire)
+        self.changed()
+        self.refresh()
+        return True
 
     def clean(self):
         self.dirty = False
