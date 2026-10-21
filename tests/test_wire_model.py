@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from wire_model import Numbering, Wire, assign_numbers, export_csv, issues, load_project, save_project
+from wire_model import Numbering, Wire, assign_numbers, export_csv, issues, load_project, save_project, display_net_name
 
 
 def wire(number=''):
@@ -12,6 +12,23 @@ def wire(number=''):
 
 
 class WireModelTests(unittest.TestCase):
+    def test_net_display_and_csv_preserve_internal_identity(self):
+        a, b = wire(), wire()
+        a.net_name = 'C:/project/main.kicad_sch::/child/+24V'
+        b.net_name = 'C:/other/main.kicad_sch::/child/+24V'
+        self.assertEqual(display_net_name(a.net_name), '/child/+24V')
+        self.assertEqual(display_net_name('manual::name'), 'manual::name')
+        assign_numbers([a, b])
+        self.assertEqual([a.number, b.number], ['001', '002'])
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'wires.csv'
+            export_csv(path, [a, b])
+            with path.open(encoding='utf-8-sig', newline='') as stream:
+                rows = list(csv.reader(stream))
+            self.assertEqual(rows[1][2], '/child/+24V')
+            self.assertNotIn('.kicad_sch', path.read_text(encoding='utf-8-sig'))
+        self.assertEqual(a.net_name, 'C:/project/main.kicad_sch::/child/+24V')
+
     def test_shared_net_and_idempotent(self):
         wires = [wire(), wire(), wire('legacy')]
         wires[0].net_name = wires[1].net_name = '101'
@@ -21,12 +38,13 @@ class WireModelTests(unittest.TestCase):
         self.assertNotEqual(wires[0].wire_id, wires[1].wire_id)
         self.assertEqual(issues(wires[:2]), [])
 
-    def test_invalid_endpoints_prevent_partial_update(self):
+    def test_numbering_does_not_depend_on_endpoints(self):
         wires = [wire(), Wire()]
         wires[0].net_name = '101'
-        with self.assertRaises(ValueError):
-            assign_numbers(wires)
-        self.assertEqual(wires[0].number, '')
+        wires[1].net_name = '102'
+        self.assertEqual(assign_numbers(wires), 2)
+        self.assertEqual([w.number for w in wires], ['001', '002'])
+        self.assertTrue(issues(wires))
 
     def test_validation_and_rename(self):
         w = wire('old')

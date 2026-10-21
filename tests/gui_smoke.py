@@ -9,10 +9,11 @@ import tkinter as tk
 from kiwiremanager import Application
 
 
+settings_folder = tempfile.TemporaryDirectory()
 root = tk.Tk()
 root.withdraw()
 try:
-    app = Application(root)
+    app = Application(root, settings_path=Path(settings_folder.name) / "settings.json")
     for key, value in {'net_name': '101', 'source_device': 'PLC1', 'source_terminal': 'X0',
                        'target_device': 'TB1', 'target_terminal': '1'}.items():
         app.inputs[key].set(value)
@@ -55,3 +56,4 @@ try:
     print('GUI smoke: PASS (add, number, edit, save, new, open, CSV, cancel)')
 finally:
     root.destroy()
+    settings_folder.cleanup()

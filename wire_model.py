@@ -8,6 +8,12 @@ from pathlib import Path
 from uuid import uuid4
 
 
+def display_net_name(name):
+    marker = '.kicad_sch::'
+    index = name.lower().find(marker)
+    return name[index + len(marker):] if index >= 0 else name
+
+
 @dataclass
 class Wire:
     source_device: str = ''
@@ -58,9 +64,7 @@ def issues(wires, include_unnumbered=True):
 
 
 def assign_numbers(wires, settings=None):
-    errors = issues(wires, include_unnumbered=False)
-    if errors:
-        raise ValueError('\n'.join(errors))
+    # Numbering belongs to the net, independently of physical routing.
     nets = dict.fromkeys(w.net_name for w in wires if w.net_name.strip())
     if len(nets) > 999:
         raise ValueError('ネット数が999を超えるため採番できません。データは変更していません。')
@@ -129,5 +133,5 @@ def export_csv(path, wires):
         writer = csv.writer(stream)
         writer.writerow(['電線ID', '線番', 'ネット名', '接続元機器', '接続元端子', '接続先機器', '接続先端子'])
         for w in wires:
-            writer.writerow([w.wire_id, w.number, w.net_name, w.source_device, w.source_terminal,
+            writer.writerow([w.wire_id, w.number, display_net_name(w.net_name), w.source_device, w.source_terminal,
                              w.target_device, w.target_terminal])

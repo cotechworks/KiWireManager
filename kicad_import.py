@@ -13,6 +13,8 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from wire_model import Wire
+
 
 def parse_schematic(text):
     matches = list(re.finditer(r'"(?:\\.|[^"\\])*"|[()]|[^\s()"]+', text))
@@ -99,6 +101,29 @@ class ImportResult:
     roots: list
     diagnostics: list
     nets: list = field(default_factory=list)
+
+
+def merge_imported_wires(existing, nets):
+    """Append chain connections in XML order, retaining existing edits and IDs."""
+    def key(wire):
+        return (wire.net_name, frozenset(((wire.source_device, wire.source_terminal),
+                                         (wire.target_device, wire.target_terminal))))
+
+    result = list(existing)
+    seen = {key(wire) for wire in existing}
+    for net in nets:
+        terminals = net.terminals
+        pairs = list(zip(terminals, terminals[1:])) if len(terminals) > 1 else [(terminals[0] if terminals else None, None)]
+        for source, target in pairs:
+            wire = Wire(net_name=net.key,
+                        source_device=source.device if source else '',
+                        source_terminal=source.pin if source else '',
+                        target_device=target.device if target else '',
+                        target_terminal=target.pin if target else '')
+            if key(wire) not in seen:
+                result.append(wire)
+                seen.add(key(wire))
+    return result
 
 
 def discover(folder):
@@ -222,7 +247,7 @@ def read_netlist(xml_path, root_name, root_key=None):
             seen.add((ref, pin))
             terminals.append(Terminal(ref, pin, components.get(ref, ''),
                                       endpoint.get('pinfunction', '')))
-        if name and terminals:
+        if name:
             nets.append(ImportedNet(f'{root_key or root_name}::{name}', name, root_name, terminals))
     return nets
 

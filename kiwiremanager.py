@@ -5,17 +5,28 @@ import threading
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from wire_model import Numbering, Wire, assign_numbers, export_csv, issues, load_project, save_project
-from kicad_import import import_folder
-from kicad_dialog import ImportDialog
+from wire_model import Numbering, Wire, assign_numbers, export_csv, issues, load_project, save_project, display_net_name
+from kicad_import import import_folder, merge_imported_wires
+from kicad_dialog import ImportTabs
+from settings_dialog import SettingsDialog
+from app_settings import default_settings_path, load_settings, save_settings
 
 
 class Application:
-    def __init__(self, root):
+    def __init__(self, root, settings_path=None):
         self.root = root
         self.wires = []
         self.path = None
         self.dirty = False
+        self.import_result = None
+        self.import_generation = 0
+        self.include_single_terminal = True
+        self.settings_path = Path(settings_path) if settings_path is not None else default_settings_path()
+        settings_error = None
+        try:
+            self.include_single_terminal = load_settings(self.settings_path)
+        except (OSError, ValueError) as exc:
+            settings_error = str(exc)
         root.title('KiWire Manager — 線番管理')
         root.geometry('1060x650')
         root.minsize(850, 520)
@@ -26,14 +37,19 @@ class Application:
         self.import_button.pack(side='left', padx=3)
         for title, command in [('新規', self.new), ('開く', self.open),
                                ('保存', self.save), ('名前を付けて保存', lambda: self.save(True)),
-                               ('CSV出力', self.export)]:
+                               ('CSV出力', self.export), ('設定', self.open_settings)]:
             ttk.Button(toolbar, text=title, command=command).pack(side='left', padx=3)
-        numbering = ttk.LabelFrame(root, text='ネットの初出順に001〜999を割当。同じネットは線番を共有。未設定は保留します。', padding=10)
+        self.notebook = ttk.Notebook(root)
+        self.notebook.pack(fill='both', expand=True, padx=10)
+        self.wire_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.wire_tab, text='電線一覧')
+        self.import_tabs = ImportTabs(self.notebook)
+        numbering = ttk.LabelFrame(self.wire_tab, text='ネットの初出順に001〜999を割当。同じネットは線番を共有。未設定は保留します。', padding=10)
         numbering.pack(fill='x', padx=10)
         self.numbering_settings = Numbering()
         ttk.Button(numbering, text='3桁通し番号を採番', command=self.number).pack(side='left', padx=12)
         ttk.Button(numbering, text='検証', command=self.check).pack(side='left')
-        table_frame = ttk.Frame(root, padding=10)
+        table_frame = ttk.Frame(self.wire_tab, padding=10)
         table_frame.pack(fill='both', expand=True)
         self.columns = ('net_name', 'number', 'source_device', 'source_terminal', 'target_device', 'target_terminal')
         self.labels = ('ネット名', '線番（自動）', '接続元機器', '接続元端子', '接続先機器', '接続先端子')
@@ -46,7 +62,7 @@ class Application:
         self.table.pack(side='left', fill='both', expand=True)
         scrollbar.pack(side='right', fill='y')
         self.table.bind('<<TreeviewSelect>>', self.select)
-        editor = ttk.LabelFrame(root, text='電線入力（登録・ネット変更後に「3桁通し番号を採番」を押してください）', padding=10)
+        editor = ttk.LabelFrame(self.wire_tab, text='電線入力（取込順の仮配線は編集可能。接続先空欄の行も採番できます）', padding=10)
         editor.pack(fill='x', padx=10)
         self.inputs = {}
         for i, (column, title) in enumerate(zip(self.columns, self.labels)):
@@ -55,7 +71,7 @@ class Application:
             self.inputs[column] = variable
             ttk.Entry(editor, textvariable=variable, width=15, state='readonly' if column == 'number' else 'normal').grid(row=1, column=i, padx=(0, 8), sticky='ew')
             editor.columnconfigure(i, weight=1)
-        actions = ttk.Frame(root, padding=10)
+        actions = ttk.Frame(self.wire_tab, padding=10)
         actions.pack(fill='x')
         for title, command in [('追加', self.add), ('選択行を更新', self.update),
                                ('入力クリア', self.clear)]:
@@ -63,6 +79,9 @@ class Application:
         ttk.Label(actions, text='入力後は「追加」または「選択行を更新」で確定してください。').pack(side='left', padx=10)
         self.status = tk.StringVar(value='ネット名と電線の接続情報を入力してください。')
         ttk.Label(root, textvariable=self.status, padding=10).pack(fill='x')
+        if settings_error:
+            root.after_idle(lambda: messagebox.showwarning('設定読込エラー',
+                f'設定を読み込めないため初期値を使用します。\n{self.settings_path}\n{settings_error}', parent=root))
 
     def changed(self, *args):
         self.dirty = True
@@ -73,6 +92,9 @@ class Application:
         if not folder:
             return
         self.import_button.configure(state='disabled')
+        self.import_generation += 1
+        generation = self.import_generation
+        include_single_terminal = self.include_single_terminal
         self.status.set('回路図の階層とネットを読み込んでいます…')
         output = queue.Queue()
 
@@ -89,17 +111,48 @@ class Application:
                 self.root.after(100, poll)
                 return
             self.import_button.configure(state='normal')
+            if generation != self.import_generation:
+                return
             if error:
                 self.status.set('KiCad取込に失敗しました。電線一覧は変更していません。')
+                self.import_tabs.set_diagnostics([error])
+                self.notebook.select(self.import_tabs.diagnostic_frame)
                 messagebox.showerror('KiCad取込エラー', error, parent=self.root)
             else:
-                self.status.set(f'{len(result.sheets)}ファイル・{len(result.nets)}ネットを読み込みました。')
-                dialog = ImportDialog(self.root, result, self.add_imported_wire)
-                dialog.transient(self.root)
-                dialog.grab_set()
+                self.apply_import(result, include_single_terminal)
 
         threading.Thread(target=work, daemon=True).start()
         self.root.after(100, poll)
+
+    def open_settings(self):
+        def apply(value):
+            try:
+                save_settings(self.settings_path, value)
+            except (OSError, ValueError) as exc:
+                messagebox.showerror('設定保存エラー', f'{self.settings_path}\n{exc}', parent=self.root)
+                return False
+            self.include_single_terminal = value
+            return True
+        return SettingsDialog(self.root, self.include_single_terminal, apply)
+
+    def apply_import(self, result, include_single_terminal=None):
+        if include_single_terminal is None:
+            include_single_terminal = self.include_single_terminal
+        nets = [net for net in result.nets if include_single_terminal or len(net.terminals) != 1]
+        skipped = len(result.nets) - len(nets)
+        wires = merge_imported_wires(self.wires, nets)
+        added = len(wires) - len(self.wires)
+        self.wires = wires
+        self.import_result = result
+        if added:
+            self.changed()
+        incomplete = [net for net in nets if len(net.terminals) < 2]
+        messages = [f'接続先未確定（{len(net.terminals)}端子）: {net.root} / {net.name}' for net in incomplete]
+        self.import_tabs.show_result(result, messages)
+        self.refresh()
+        self.clear()
+        self.notebook.select(self.wire_tab)
+        self.status.set(f'{len(nets)}ネット取込・{added}行追加。1端子ネット{skipped}件除外。接続先未確定{len(incomplete)}ネット。')
 
     def add_imported_wire(self, wire):
         endpoints = {(wire.source_device, wire.source_terminal), (wire.target_device, wire.target_terminal)}
@@ -123,7 +176,7 @@ class Application:
     def refresh(self):
         self.table.delete(*self.table.get_children())
         for wire in self.wires:
-            self.table.insert('', 'end', iid=wire.wire_id, values=[getattr(wire, c) for c in self.columns])
+            self.table.insert('', 'end', iid=wire.wire_id, values=[display_net_name(wire.net_name) if c == 'net_name' else getattr(wire, c) for c in self.columns])
         self.status.set(f'電線 {len(self.wires)}本 / ネット名未設定 {sum(not w.net_name.strip() for w in self.wires)}本')
 
     def select(self, event=None):
@@ -131,7 +184,7 @@ class Application:
         if selection:
             wire = next(w for w in self.wires if w.wire_id == selection[0])
             for column, variable in self.inputs.items():
-                variable.set(getattr(wire, column))
+                variable.set(display_net_name(wire.net_name) if column == 'net_name' else getattr(wire, column))
 
     def clear(self):
         for variable in self.inputs.values():
@@ -143,6 +196,11 @@ class Application:
         if wire_id:
             values['wire_id'] = wire_id
         previous = next((w for w in self.wires if w.wire_id == wire_id), None)
+        if previous and values['net_name']:
+            visible = display_net_name(previous.net_name)
+            if visible != previous.net_name:
+                prefix = previous.net_name[:len(previous.net_name) - len(visible)] if visible else previous.net_name
+                values['net_name'] = prefix + values['net_name']
         values['number'] = previous.number if previous and previous.net_name == values['net_name'] else ''
         wire = Wire(**values)
         errors = issues([wire], include_unnumbered=False)
@@ -198,6 +256,7 @@ class Application:
     def new(self):
         if self.confirm_discard():
             self.wires, self.path = [], None
+            self.reset_import()
             self.numbering_settings = Numbering()
             self.refresh()
             self.clear()
@@ -212,6 +271,7 @@ class Application:
         try:
             wires, settings = load_project(path)
             self.wires, self.path = wires, Path(path)
+            self.reset_import()
             self.numbering_settings = settings
             self.refresh()
             self.clear()
@@ -254,6 +314,12 @@ class Application:
     def close(self):
         if self.confirm_discard():
             self.root.destroy()
+
+    def reset_import(self):
+        self.import_generation += 1
+        self.import_result = None
+        self.import_tabs.clear()
+        self.notebook.select(self.wire_tab)
 
 
 if __name__ == '__main__':
