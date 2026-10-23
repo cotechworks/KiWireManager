@@ -89,14 +89,15 @@ class WireModelTests(unittest.TestCase):
             record = dict(w.__dict__)
             del record['net_name']
             path.write_text(json.dumps({'version': 1, 'numbering': {'prefix': 'W', 'start': 10, 'digits': 4}, 'wires': [record]}), encoding='utf-8')
-            loaded, settings = load_project(path)
+            loaded, settings, annotations = load_project(path)
+            self.assertEqual(annotations, [])
             self.assertEqual(loaded[0].wire_id, w.wire_id)
             self.assertEqual(loaded[0].number, '001')
             self.assertEqual(loaded[0].net_name, '')
             self.assertEqual(assign_numbers(loaded), 0)
             save_project(path, loaded, settings)
             self.assertEqual(load_project(path)[0], loaded)
-            self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['version'], 2)
+            self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['version'], 3)
 
     def test_roundtrip_and_csv(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -106,7 +107,8 @@ class WireModelTests(unittest.TestCase):
             wires[0].source_device = '端子台,試験'
             settings = Numbering('W', 10, 4)
             save_project(path, wires, settings)
-            loaded, loaded_settings = load_project(path)
+            loaded, loaded_settings, annotations = load_project(path)
+            self.assertEqual(annotations, [])
             self.assertEqual(loaded, wires)
             self.assertEqual(loaded_settings, settings)
             save_project(path, loaded, settings)

@@ -7,6 +7,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import tkinter as tk
 from kiwiremanager import Application
+from wire_model import TextAnnotation
 
 
 settings_folder = tempfile.TemporaryDirectory()
@@ -35,16 +36,20 @@ try:
     app.update()
     assert app.wires[0].target_terminal == '2'
     assert app.wires[0].wire_id == identity
+    annotation = TextAnnotation('power.kicad_sch', '89e8ac2b-45a5-4a84-9ae9-49f240da1a8d', app.wires[0].net_name, '001')
+    app.annotations = [annotation]
     with tempfile.TemporaryDirectory() as folder:
         path = str(Path(folder) / 'project.json')
         with patch('kiwiremanager.filedialog.asksaveasfilename', return_value=path):
             assert app.save()
         app.new()
         assert not app.wires
+        assert not app.annotations
         with patch('kiwiremanager.filedialog.askopenfilename', return_value=path):
             app.open()
         assert app.wires[0].number == '001'
         assert app.wires[0].target_terminal == '2'
+        assert app.annotations == [annotation]
         csv_path = str(Path(folder) / 'wires.csv')
         with patch('kiwiremanager.filedialog.asksaveasfilename', return_value=csv_path):
             app.export()

@@ -5,7 +5,7 @@ import os
 import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 
 def display_net_name(name):
@@ -38,6 +38,34 @@ class Numbering:
             raise ValueError('開始番号は0以上の整数で指定してください。')
         if type(self.digits) is not int or not 1 <= self.digits <= 12:
             raise ValueError('桁数は1〜12で指定してください。')
+
+
+@dataclass
+class TextAnnotation:
+    sheet: str
+    text_uuid: str
+    net_key: str
+    last_written_number: str
+
+
+def validate_annotations(annotations):
+    seen = set()
+    for annotation in annotations:
+        if not isinstance(annotation, TextAnnotation):
+            raise ValueError('線番テキストの対応情報が不正です。')
+        if not all(isinstance(item, str) and item.strip() for item in asdict(annotation).values()):
+            raise ValueError('線番テキストの対応情報には空でない文字列が必要です。')
+        try:
+            identifier = UUID(annotation.text_uuid)
+        except ValueError as exc:
+            raise ValueError('線番テキストのUUIDが不正です。') from exc
+        number = annotation.last_written_number
+        if len(number) != 3 or not number.isascii() or not number.isdigit() or number == '000':
+            raise ValueError('前回書込線番は001〜999で指定してください。')
+        key = (annotation.sheet, identifier)
+        if key in seen:
+            raise ValueError('同じシートのテキストUUIDが重複しています。')
+        seen.add(key)
 
 
 def issues(wires, include_unnumbered=True):
@@ -77,10 +105,12 @@ def assign_numbers(wires, settings=None):
     return count
 
 
-def save_project(path, wires, settings):
+def save_project(path, wires, settings, annotations=()):
     settings.validate()
-    payload = {'version': 2, 'numbering': asdict(settings),
-               'wires': [asdict(w) for w in wires]}
+    validate_annotations(annotations)
+    payload = {'version': 3, 'numbering': asdict(settings),
+               'wires': [asdict(w) for w in wires],
+               'annotations': [asdict(annotation) for annotation in annotations]}
     path = Path(path)
     temporary = None
     try:
@@ -99,7 +129,7 @@ def save_project(path, wires, settings):
 def load_project(path):
     try:
         data = json.loads(Path(path).read_text(encoding='utf-8-sig'))
-        if type(data) is not dict or type(data.get('version')) is not int or data['version'] not in (1, 2):
+        if type(data) is not dict or type(data.get('version')) is not int or data['version'] not in (1, 2, 3):
             raise ValueError('対応していないプロジェクト形式です。')
         settings = Numbering(**data['numbering'])
         settings.validate()
@@ -120,7 +150,17 @@ def load_project(path):
                 raise ValueError('電線IDが空、または重複しています。')
             ids.add(wire.wire_id)
             wires.append(wire)
-        return wires, settings
+        annotations = []
+        if data['version'] == 3:
+            if not isinstance(data['annotations'], list):
+                raise ValueError('線番テキストの対応情報は配列で指定してください。')
+            annotation_fields = set(TextAnnotation.__dataclass_fields__)
+            for record in data['annotations']:
+                if not isinstance(record, dict) or set(record) != annotation_fields:
+                    raise ValueError('線番テキストの対応情報の項目が不正です。')
+                annotations.append(TextAnnotation(**record))
+            validate_annotations(annotations)
+        return wires, settings, annotations
     except (KeyError, TypeError) as exc:
         raise ValueError('プロジェクト形式が不正です。') from exc
 

@@ -1,5 +1,13 @@
 # Architecture — Codex引き継ぎ
 
+## 最新保存形式：UUID対応情報の統合（D-020）
+
+wire_model.pyにTextAnnotationを追加。sheet（対象シート）、text_uuid（テキストUUID）、net_key（内部ネット識別子）、last_written_number（最後に回路図へ書いた線番）を保持。
+save_projectはannotationsを含む形式3を保存。load_projectは電線・設定・対応情報の3要素を返す。形式1・2では対応情報は空リスト。
+UUID形式、必須文字列、001〜999の前回線番、同一シート・同一UUIDの重複を検証してから保存・適用する。
+Applicationは対応情報をプロジェクトと共に保持し、保存／別名保存／読込で引き継ぐ。新規作成でクリア。採番・取込では前回書込線番を変更しない。
+JSON形式以外の回路図書込は未実装。以前の「形式2を継続」という説明は本節で更新。
+
 ## 取込設定ダイアログ
 
 settings_dialog.pyのSettingsDialogで1端子ネットの取込をBooleanVarとして編集。OK時のみApplicationの設定値を更新する。

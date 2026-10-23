@@ -16,6 +16,7 @@ class Application:
     def __init__(self, root, settings_path=None):
         self.root = root
         self.wires = []
+        self.annotations = []
         self.path = None
         self.dirty = False
         self.import_result = None
@@ -256,6 +257,7 @@ class Application:
     def new(self):
         if self.confirm_discard():
             self.wires, self.path = [], None
+            self.annotations = []
             self.reset_import()
             self.numbering_settings = Numbering()
             self.refresh()
@@ -269,8 +271,9 @@ class Application:
         if not path:
             return
         try:
-            wires, settings = load_project(path)
+            wires, settings, annotations = load_project(path)
             self.wires, self.path = wires, Path(path)
+            self.annotations = annotations
             self.reset_import()
             self.numbering_settings = settings
             self.refresh()
@@ -288,7 +291,7 @@ class Application:
                 return False
             path = Path(chosen)
         try:
-            save_project(path, self.wires, self.settings())
+            save_project(path, self.wires, self.settings(), self.annotations)
             self.path = path
             self.clean()
             self.status.set(f'保存しました: {path}')
