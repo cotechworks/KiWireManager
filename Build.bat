@@ -21,6 +21,7 @@ if errorlevel 1 (
 
 "%BUILD_PYTHON%" -m nuitka ^
     --mode=standalone ^
+    --follow-imports ^
     --enable-plugin=tk-inter ^
     --windows-console-mode=disable ^
     --output-dir=build ^
