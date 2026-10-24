@@ -13,6 +13,18 @@ Windowsでは `start_kiwiremanager.bat` をダブルクリックして起動で�
 python kiwiremanager.py
 ```
 
+## exeの作成（Nuitka）
+
+Windowsで `Build.bat` を実行します。`.venv\Scripts\python.exe` があれば優先し、なければPATH上のPythonを使います。Python 3.10以降・Tkinter・Nuitkaと、Nuitka対応のCコンパイラーが必要です。
+Nuitkaがない場合は停止してインストールコマンドを表示します。必要に応じて、使用するPython環境で `python -m pip install Nuitka` を実行してください。バッチは依存パッケージを自動追加しません。
+
+`standalone`方式でTkinterを含めてビルドし、GUI起動時のコンソールを非表示にします。[Nuitka公式マニュアル](https://nuitka.net/user-documentation/user-manual.html)
+
+出力先は `build\kiwiremanager.dist\KiWireManager.exe` です。**配布時はkiwiremanager.distフォルダー全体を渡してください。** exeだけでは動作しません。利用者側のPythonは不要ですが、回路図取込・書込にはKiCad 10を別途インストールする必要があります。
+利用者の `settings.json` と線番JSON・図面は同梱しません。設定は配布先で設定ダイアログのOK時に作成します。配布先は書込可能なフォルダーにしてください。
+
+2026-10-24：利用者環境でBuild.batによるビルド・exe生成と、生成exeでの起動・設定保存・取込・回路図への書込を確認済みです。
+
 ## 操作
 
 1. ネット名と接続元・接続先の機器番号・端子番号を入力して「追加」を押します。1行が物理電線1本です。
