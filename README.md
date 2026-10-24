@@ -1,4 +1,4 @@
-# KiWire Manager（仮称）
+# KiWireManager
 
 KiCad回路図のネットを取り込み、ネット単位で3桁の線番を割り当てるWindows用GUIツールです。
 
