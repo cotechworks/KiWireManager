@@ -4,6 +4,7 @@ Only sanitized, temporary copies are passed to KiCad. External/missing sheet
 references are removed from those copies, never from the user's schematics.
 """
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -71,6 +72,7 @@ class Sheet:
     path: Path
     node: list = field(repr=False)
     refs: list = field(default_factory=list)
+    original_bytes: bytes = field(default=b'', repr=False)
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,8 @@ class Terminal:
     pin: str
     sheet: str = ''
     pinfunction: str = ''
+    symbol_uuid: str = ''
+    instance_path: str = ''
 
     @property
     def label(self):
@@ -101,6 +105,7 @@ class ImportResult:
     roots: list
     diagnostics: list
     nets: list = field(default_factory=list)
+    fingerprints: dict = field(default_factory=dict)
 
 
 def merge_imported_wires(existing, nets):
@@ -140,7 +145,8 @@ def discover(folder):
             continue
         visited.add(real_directory)
         directories[:] = sorted(d for d in directories
-                                if not Path(directory, d).is_symlink()
+                                if d.lower() != 'backup'
+                                and not Path(directory, d).is_symlink()
                                 and Path(directory, d).resolve().is_relative_to(base)
                                 and not (hasattr(Path(directory, d), 'is_junction') and Path(directory, d).is_junction()))
         for filename in sorted(files):
@@ -154,7 +160,8 @@ def discover(folder):
                 diagnostics.append(f'不足（フォルダー外）: {path}')
                 continue
             try:
-                sheets[resolved] = Sheet(resolved, parse_schematic(resolved.read_text(encoding='utf-8-sig')))
+                original = resolved.read_bytes()
+                sheets[resolved] = Sheet(resolved, parse_schematic(original.decode('utf-8-sig')), original_bytes=original)
             except (OSError, ValueError) as exc:
                 diagnostics.append(f'読込失敗: {path.name}: {exc}')
     if not sheets:
@@ -197,7 +204,7 @@ def discover(folder):
 
     for path in sheets:
         visit(path)
-    return ImportResult(base, sheets, roots, diagnostics)
+    return ImportResult(base, sheets, roots, diagnostics, fingerprints={p: hashlib.sha256(s.original_bytes).hexdigest() for p, s in sheets.items()})
 
 
 def find_cli():
@@ -234,7 +241,9 @@ def read_netlist(xml_path, root_name, root_key=None):
         if not ref or ref in components:
             raise ValueError('機器番号が空、または重複しています。KiCadでアノテーションを確認してください。')
         sheet = component.find('sheetpath')
-        components[ref] = sheet.get('names', '') if sheet is not None else ''
+        components[ref] = (sheet.get('names', '') if sheet is not None else '',
+                           component.findtext('tstamps', '').strip(),
+                           sheet.get('tstamps', '') if sheet is not None else '')
     nets = []
     for node in document.findall('./nets/net'):
         name = node.get('name', '')
@@ -245,8 +254,8 @@ def read_netlist(xml_path, root_name, root_key=None):
             if not ref or not pin or (ref, pin) in seen:
                 continue
             seen.add((ref, pin))
-            terminals.append(Terminal(ref, pin, components.get(ref, ''),
-                                      endpoint.get('pinfunction', '')))
+            sheet, symbol_uuid, instance_path = components.get(ref, ('', '', ''))
+            terminals.append(Terminal(ref, pin, sheet, endpoint.get('pinfunction', ''), symbol_uuid, instance_path))
         if name:
             nets.append(ImportedNet(f'{root_key or root_name}::{name}', name, root_name, terminals))
     return nets
@@ -290,4 +299,7 @@ def import_folder(folder, cli=None):
             result.nets.extend(read_netlist(output, root_name, root.as_posix()))
             if process.stderr.strip():
                 result.diagnostics.append(f'KiCad: {root_name}: {process.stderr[-1500:].strip()}')
+    for path, fingerprint in result.fingerprints.items():
+        if hashlib.sha256(path.read_bytes()).hexdigest() != fingerprint:
+            raise ValueError(f'取込中に図面が変更されました。再取込してください: {path.name}')
     return result

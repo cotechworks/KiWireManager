@@ -2,6 +2,7 @@
 import tkinter as tk
 import queue
 import threading
+from copy import deepcopy
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -10,6 +11,7 @@ from kicad_import import import_folder, merge_imported_wires
 from kicad_dialog import ImportTabs
 from settings_dialog import SettingsDialog
 from app_settings import default_settings_path, load_settings, save_settings
+from schematic_writeback import prepare_writeback, execute_writeback, MissingAnnotations, RecoveryRequired, recover_transaction
 
 
 class Application:
@@ -36,6 +38,8 @@ class Application:
         toolbar.pack(fill='x')
         self.import_button = ttk.Button(toolbar, text='KiCadフォルダー取込', command=self.import_kicad)
         self.import_button.pack(side='left', padx=3)
+        self.write_button = ttk.Button(toolbar, text='回路図へ書込', command=self.write_schematic)
+        self.write_button.pack(side='left', padx=3)
         for title, command in [('新規', self.new), ('開く', self.open),
                                ('保存', self.save), ('名前を付けて保存', lambda: self.save(True)),
                                ('CSV出力', self.export), ('設定', self.open_settings)]:
@@ -87,6 +91,94 @@ class Application:
     def changed(self, *args):
         self.dirty = True
         self.root.title(f'KiWire Manager — {self.path.name if self.path else "新規プロジェクト"} *')
+
+    def run_write_task(self, action, success, failure):
+        self.write_button.configure(state='disabled')
+        self.import_button.configure(state='disabled')
+        progress = tk.Toplevel(self.root)
+        progress.title('回路図書込')
+        progress.transient(self.root)
+        progress.protocol('WM_DELETE_WINDOW', lambda: None)
+        ttk.Label(progress, text='回路図を検証・処理しています…', padding=24).pack()
+        progress.grab_set()
+        output = queue.Queue()
+        def work():
+            try:
+                output.put((action(), None))
+            except Exception as exc:
+                output.put((None, exc))
+        def poll():
+            try:
+                result, error = output.get_nowait()
+            except queue.Empty:
+                self.root.after(100, poll)
+                return
+            progress.destroy()
+            self.write_button.configure(state='normal')
+            self.import_button.configure(state='normal')
+            if error is not None:
+                failure(error)
+            else:
+                success(result)
+        threading.Thread(target=work, daemon=True).start()
+        self.root.after(100, poll)
+
+    def write_schematic(self, recreate_missing=False):
+        if self.import_result is None:
+            messagebox.showinfo('回路図書込', '先に回路図フォルダーを取り込んでください。', parent=self.root)
+            return
+        if str(self.import_button['state']) == 'disabled':
+            messagebox.showinfo('回路図書込', '取込が完了してから実行してください。', parent=self.root)
+            return
+        if self.path is None and not self.save():
+            return
+        imported = self.import_result
+        wires, settings, annotations = deepcopy(self.wires), deepcopy(self.settings()), deepcopy(self.annotations)
+        def failure(error):
+            if isinstance(error, MissingAnnotations):
+                if messagebox.askyesno('削除された線番テキスト', f'{error}\n\n再作成しますか？', parent=self.root):
+                    self.write_schematic(recreate_missing=True)
+                return
+            if isinstance(error, RecoveryRequired):
+                if messagebox.askyesno('未完了の書込', f'{error}\n\n前回処理前の状態へ復元しますか？', parent=self.root):
+                    def recovered(result):
+                        self.wires, self.numbering_settings, self.annotations = load_project(self.path)
+                        self.reset_import()
+                        self.refresh()
+                        self.clear()
+                        self.clean()
+                        messagebox.showinfo('復元完了', '回路図とJSONを復元しました。図面を再取込してください。', parent=self.root)
+                    self.run_write_task(lambda: recover_transaction(error.journal, imported.folder, self.path),
+                        recovered,
+                        lambda exc: messagebox.showerror('復元エラー', str(exc), parent=self.root))
+                return
+            self.import_tabs.set_diagnostics([str(error)])
+            self.notebook.select(self.import_tabs.diagnostic_frame)
+            messagebox.showerror('回路図書込エラー', str(error), parent=self.root)
+        def preview(plan):
+            self.import_tabs.set_diagnostics(plan.warnings)
+            if not plan.updates:
+                messagebox.showinfo('回路図書込', '変更する線番テキストはありません。', parent=self.root)
+                return
+            additions = sum(edit.old_number is None for edit in plan.edits)
+            updates = sum(edit.old_number is not None and edit.old_number != edit.number for edit in plan.edits)
+            targets = [p.name for p in plan.updates if p != plan.project_path]
+            warning_text = '\n'.join(plan.warnings[:12])
+            if len(plan.warnings) > 12:
+                warning_text += f'\nほか{len(plan.warnings)-12}件（不足・警告タブに表示）'
+            text = (f'追加{additions}箇所・更新{updates}箇所\n対象図面: ' + ', '.join(targets)
+                    + f'\n\nバックアップ先: {imported.folder / "backup"}\n回路図とプロジェクトJSONを更新します。')
+            if warning_text:
+                text += '\n\n対象外・警告:\n' + warning_text
+            if not messagebox.askyesno('書込内容の確認', text + '\n\n実行しますか？', parent=self.root):
+                return
+            def completed(backup):
+                self.annotations = plan.annotations
+                self.clean()
+                self.status.set(f'回路図への線番書込が完了しました。バックアップ: {backup}')
+                messagebox.showinfo('書込完了', f'バックアップ: {backup}', parent=self.root)
+            self.run_write_task(lambda: execute_writeback(plan), completed, failure)
+        self.run_write_task(lambda: prepare_writeback(imported, wires, settings, annotations, self.path, recreate_missing), preview, failure)
 
     def import_kicad(self):
         folder = filedialog.askdirectory(parent=self.root, title='回路図を含むフォルダーを選択（サブフォルダーも検索）')
