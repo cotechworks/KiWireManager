@@ -28,6 +28,8 @@ root = tk.Tk()
 root.withdraw()
 try:
     app = Application(root, settings_path=Path(settings_folder.name) / "settings.json")
+    assert app.include_single_terminal is False
+    app.include_single_terminal = True  # Explicitly include all nets for bulk-registration checks.
     with tempfile.TemporaryDirectory() as temporary:
         folder = Path(temporary)
         main, child = folder / 'main.kicad_sch', folder / 'child.kicad_sch'
@@ -85,11 +87,12 @@ try:
             release.set()
             wait_idle(root, app)
         assert not app.wires, 'stale import must not modify a new project'
-        assert app.include_single_terminal is True
+        app.include_single_terminal = False
+        assert app.include_single_terminal is False
         dialog = app.open_settings()
-        dialog.include_single_terminal.set(False)
+        dialog.include_single_terminal.set(True)
         dialog.destroy()
-        assert app.include_single_terminal is True, 'cancel must discard changes'
+        assert app.include_single_terminal is False, 'cancel must discard changes'
         assert not app.settings_path.exists()
         dialog = app.open_settings()
         dialog.include_single_terminal.set(False)

@@ -15,7 +15,7 @@ def load_settings(path):
     try:
         data = json.loads(Path(path).read_text(encoding='utf-8-sig'))
     except FileNotFoundError:
-        return True
+        return False
     if (not isinstance(data, dict) or type(data.get('version')) is not int or data['version'] != 1
             or type(data.get('include_single_terminal')) is not bool):
         raise ValueError('設定ファイルの形式が不正です。')

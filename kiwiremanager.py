@@ -23,7 +23,7 @@ class Application:
         self.dirty = False
         self.import_result = None
         self.import_generation = 0
-        self.include_single_terminal = True
+        self.include_single_terminal = False
         self.settings_path = Path(settings_path) if settings_path is not None else default_settings_path()
         settings_error = None
         try:

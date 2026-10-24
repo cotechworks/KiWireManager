@@ -11,7 +11,7 @@ class SettingsTests(unittest.TestCase):
     def test_default_and_persist_false(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'settings.json'
-            self.assertTrue(app_settings.load_settings(path))
+            self.assertFalse(app_settings.load_settings(path))
             self.assertFalse(path.exists())
             app_settings.save_settings(path, False)
             self.assertFalse(app_settings.load_settings(path))
