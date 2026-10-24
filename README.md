@@ -1,29 +1,17 @@
 # KiWire Manager（仮称）
 
-Python 3.10以降とTkinterを使用する独立した線番管理GUIです。追加Pythonパッケージは不要です。回路図取込にはKiCad 10が必要です。
+KiCad回路図のネットを取り込み、ネット単位で3桁の線番を割り当てるWindows用GUIツールです。
 
-## 起動
+## ダウンロードと起動
 
-Windowsでは `start_kiwiremanager.bat` をダブルクリックして起動できます。
-エラー時にはコンソールが開いたままになり、内容を確認できます。
+1. [GitHub Releases](https://github.com/cotechworks/KiWireManager/releases)を開きます。
+2. 対象バージョンの「Assets」から、dist配下のファイルをまとめた配布用アーカイブをダウンロードします。「Source code」は配布用実行ファイルではありません。
+3. アーカイブを、書き込み可能な任意のフォルダーへすべて展開します。
+4. 展開先の `KiWireManager.exe` をダブルクリックして起動します。
 
-このフォルダーで次を実行します。
+**exeだけを取り出さず、同梱ファイル・フォルダーをまとめて保持してください。** PythonやNuitkaのインストールは不要です。回路図の取込・書込にはKiCad 10を別途インストールしてください。
 
-```powershell
-python kiwiremanager.py
-```
-
-## exeの作成（Nuitka）
-
-Windowsで `Build.bat` を実行します。`.venv\Scripts\python.exe` があれば優先し、なければPATH上のPythonを使います。Python 3.10以降・Tkinter・Nuitkaと、Nuitka対応のCコンパイラーが必要です。
-Nuitkaがない場合は停止してインストールコマンドを表示します。必要に応じて、使用するPython環境で `python -m pip install Nuitka` を実行してください。バッチは依存パッケージを自動追加しません。
-
-`standalone`方式でTkinterを含めてビルドし、GUI起動時のコンソールを非表示にします。[Nuitka公式マニュアル](https://nuitka.net/user-documentation/user-manual.html)
-
-出力先は `build\kiwiremanager.dist\KiWireManager.exe` です。**配布時はkiwiremanager.distフォルダー全体を渡してください。** exeだけでは動作しません。利用者側のPythonは不要ですが、回路図取込・書込にはKiCad 10を別途インストールする必要があります。
-利用者の `settings.json` と線番JSON・図面は同梱しません。設定は配布先で設定ダイアログのOK時に作成します。配布先は書込可能なフォルダーにしてください。
-
-2026-10-24：利用者環境でBuild.batによるビルド・exe生成と、生成exeでの起動・設定保存・取込・回路図への書込を確認済みです。
+設定は「設定」ダイアログの「OK」でexeと同じフォルダーの `settings.json` に保存されます。線番JSON・回路図は利用者側で用意してください。
 
 ## 操作
 
