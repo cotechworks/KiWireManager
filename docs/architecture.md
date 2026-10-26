@@ -17,6 +17,8 @@
 
 ## モジュール構成
 
+アプリケーションのPythonソース10ファイルは`src/`に配置する。起動はプロジェクト直下から`python src/kiwiremanager.py`。`Build.bat`は直下に置き、`src\kiwiremanager.py`をビルドする。テストは`tests/`に保持し、各テストから`src/`をimport検索パスへ追加する。
+
 Python 3.10以降の標準ライブラリとTkinterによる独立GUIとする。回路図取込・書込前検証にはKiCad 10のCLIを使用する。
 
 | モジュール | 役割 |
@@ -50,7 +52,7 @@ Wireはwire_id、net_name、number、接続元・接続先の機器番号と端�
 settings_dialog.pyのSettingsDialogで1端子ネットの取込をBooleanVarとして編集。OK時のみApplicationの設定値を更新する。
 取込開始時に値を取得し、その取込中に設定が変更されても結果の適用条件を変えない。
 apply_importで端子数が正確に1のネットを設定に従って登録対象から除外する。階層・元の不足診断は維持し、除外したネットの未確定行警告は生成しない。
-app_settings.pyが設定JSONの検証・保存・復元と保存先判定を担当する。通常はスクリプトのフォルダー、sys.frozen時はsys.executableのフォルダーに保存する。
+src/app_settings.pyが設定JSONの検証・保存・復元と保存先判定を担当する。Nuitkaはモジュールの__compiled__で判定し、sys.argv[0]の実行ファイルと同じフォルダーへsettings.jsonを保存する。sys.frozen方式のexeではsys.executableのフォルダーを使う。通常のPython実行ではsrcの親であるプロジェクト直下を使い、既存設定を維持する。作業フォルダーには依存しない。
 設定のOK時は同じディレクトリ内の一時ファイルから置換保存し、成功した場合だけメモリ上の値を変更してダイアログを閉じる。
 ファイル未作成時はオフ。読込エラー時は警告して初期値を使い、保存エラー時は従来値とダイアログを維持する。プロジェクトJSONとは独立したバージョン1のsettings.jsonを使う。
 

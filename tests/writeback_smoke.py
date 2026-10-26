@@ -4,7 +4,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from kicad_import import discover, import_folder
 from schematic_writeback import prepare_writeback, execute_writeback, net_signature
 from wire_model import Numbering, assign_numbers, load_project, save_project

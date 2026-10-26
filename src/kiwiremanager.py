@@ -1,4 +1,4 @@
-"""Run with: python kiwiremanager.py"""
+"""Run with: python src/kiwiremanager.py"""
 import tkinter as tk
 import queue
 import threading

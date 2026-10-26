@@ -1,7 +1,10 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+
 import json
 import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 import app_settings
@@ -38,9 +41,20 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), original)
             self.assertEqual(list(Path(folder).iterdir()), [path])
 
+    def test_nuitka_settings_are_saved_beside_executable(self):
+        with tempfile.TemporaryDirectory() as folder:
+            executable = Path(folder) / 'KiWireManager.exe'
+            with patch.object(app_settings, '__compiled__', object(), create=True), \
+                    patch.object(app_settings.sys, 'argv', [str(executable)]), \
+                    patch.object(app_settings.sys, 'frozen', False, create=True):
+                path = app_settings.default_settings_path()
+                self.assertEqual(path, executable.parent / 'settings.json')
+                app_settings.save_settings(path, True)
+                self.assertTrue(app_settings.load_settings(path))
+
     def test_location_uses_script_or_frozen_executable(self):
         self.assertEqual(app_settings.default_settings_path().name, 'settings.json')
-        self.assertEqual(app_settings.default_settings_path().parent, Path(app_settings.__file__).resolve().parent)
+        self.assertEqual(app_settings.default_settings_path().parent, Path(app_settings.__file__).resolve().parents[1])
         with patch.object(app_settings.sys, 'frozen', True, create=True), \
                 patch.object(app_settings.sys, 'executable', str(Path.cwd() / 'distribution' / 'app.exe')):
             self.assertEqual(app_settings.default_settings_path().parent, Path.cwd() / 'distribution')

@@ -1,4 +1,4 @@
-"""Persistent application preferences beside the script or packaged executable."""
+"""Persistent application preferences in the project root or beside the packaged executable."""
 import json
 import os
 import sys
@@ -7,7 +7,12 @@ from pathlib import Path
 
 
 def default_settings_path():
-    directory = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
+    if '__compiled__' in globals():  # Nuitka does not set sys.frozen.
+        directory = Path(sys.argv[0]).resolve().parent
+    elif getattr(sys, 'frozen', False):
+        directory = Path(sys.executable).resolve().parent
+    else:
+        directory = Path(__file__).resolve().parents[1]
     return directory / 'settings.json'
 
 

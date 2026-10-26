@@ -1,8 +1,11 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+
 import json
 import tempfile
 import unittest
 from dataclasses import asdict, replace
-from pathlib import Path
 from uuid import uuid4
 
 from wire_model import Numbering, TextAnnotation, Wire, assign_numbers, load_project, save_project

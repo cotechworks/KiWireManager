@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 import tkinter as tk
 from kicad_import import ImportResult, ImportedNet, Sheet, SheetRef, Terminal
 from kiwiremanager import Application

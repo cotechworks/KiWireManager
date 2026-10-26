@@ -1,6 +1,9 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+
 import tempfile
 import unittest
-from pathlib import Path
 
 from kicad_import import ImportedNet, Terminal, merge_imported_wires
 from wire_model import Numbering, Wire, assign_numbers, export_csv, load_project, save_project

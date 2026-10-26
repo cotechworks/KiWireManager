@@ -26,7 +26,7 @@ if errorlevel 1 (
     --windows-console-mode=disable ^
     --output-dir=build ^
     --output-filename=KiWireManager.exe ^
-    kiwiremanager.py
+    src\kiwiremanager.py
 if errorlevel 1 goto :failed
 
 echo.

@@ -1,8 +1,11 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+
 import json
 import subprocess
 import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from kicad_import import discover, import_folder, parse_schematic, read_netlist, serialize
