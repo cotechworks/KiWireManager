@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from kicad_import import children, discover, import_folder, parse_schematic, serialize, value
-from schematic_annotations import TextEdit, edit_texts, first, placement_candidates, uid
+from schematic_annotations import TextEdit, edit_texts, first, placement_candidates, uid, unmanaged_marker_warnings, marked_text_ids, MARKER_GROUP
 from wire_model import TextAnnotation, validate_annotations, display_net_name
 from wiring_types import excluded_nets
 
@@ -39,6 +39,12 @@ class MissingAnnotations(ValueError):
         super().__init__('管理している線番テキストが削除されています:\n' + '\n'.join(identifiers))
 
 
+class UnmanagedMarkedTexts(ValueError):
+    def __init__(self, warnings):
+        self.warnings = warnings
+        super().__init__('JSONにない目印付きテキストを検出しました:\n' + '\n'.join(warnings))
+
+
 class RecoveryRequired(ValueError):
     def __init__(self, journal):
         self.journal = journal
@@ -54,6 +60,7 @@ class WritePlan:
     annotations: list
     edits: list
     warnings: list
+    marker_additions: int = 0
 
 
 def pending_transactions(folder):
@@ -79,7 +86,7 @@ def check_sources(imported):
         raise ValueError('取込後に元図面または参照構成が変更されています。再取込してください。')
 
 
-def prepare_writeback(imported, wires, settings, annotations, project_path, recreate_missing=False):
+def prepare_writeback(imported, wires, settings, annotations, project_path, recreate_missing=False, delete_unmanaged=False):
     pending = pending_transactions(imported.folder)
     if pending:
         raise RecoveryRequired(pending[0])
@@ -87,6 +94,19 @@ def prepare_writeback(imported, wires, settings, annotations, project_path, recr
         raise ValueError('取込時の不足・警告を解消してから書込んでください。')
     check_sources(imported)
     validate_annotations(annotations)
+    orphaned = unmanaged_marker_warnings(imported, annotations)
+    if orphaned and not delete_unmanaged:
+        raise UnmanagedMarkedTexts(orphaned)
+    orphan_edits = []
+    if orphaned:
+        managed_ids = {(a.sheet, a.text_uuid) for a in annotations}
+        for path, sheet in imported.sheets.items():
+            relative = path.relative_to(imported.folder).as_posix()
+            marked = marked_text_ids(sheet.node)
+            for text in children(sheet.node, 'text'):
+                identifier = uid(text)
+                if identifier in marked and (relative, identifier) not in managed_ids:
+                    orphan_edits.append(TextEdit(path, '', None, identifier, value(text[1])))
     settings.validate()
     project_path = Path(project_path).resolve()
     if project_path.suffix.lower() != '.json' or not project_path.is_file():
@@ -108,12 +128,12 @@ def prepare_writeback(imported, wires, settings, annotations, project_path, recr
         if n in number_nets and number_nets[n] != wire.net_name:
             raise ValueError('異なるネットの線番が重複しています。')
         numbers[wire.net_name], number_nets[n] = n, wire.net_name
-    if not numbers and not excluded:
+    if not numbers and not excluded and not orphan_edits:
         raise ValueError('書込対象のネットがありません。')
     positions, warnings = placement_candidates(imported, set(numbers)) if numbers else ({}, [])
     originals = {p: p.read_bytes() for p in imported.sheets}
     originals[project_path] = project_path.read_bytes()
-    edits, updated_annotations, managed, missing = [], [], set(), []
+    edits, updated_annotations, managed, missing = list(orphan_edits), [], set(), []
     for annotation in annotations:
         path = (imported.folder / annotation.sheet).resolve()
         if not path.is_relative_to(imported.folder) or path not in imported.sheets:
@@ -177,6 +197,11 @@ def prepare_writeback(imported, wires, settings, annotations, project_path, recr
     grouped = defaultdict(list)
     for edit in edits:
         grouped[edit.sheet].append(edit)
+    for path, sheet in imported.sheets.items():
+        if any(len(g) > 1 and value(g[1]) == MARKER_GROUP for g in children(sheet.node, 'group')):
+            grouped.setdefault(path, [])
+    marker_additions = sum(e.number is not None and e.text_uuid not in marked_text_ids(imported.sheets[e.sheet].node)
+                           for e in edits)
     updates = {}
     for path, operations in grouped.items():
         content = edit_texts(originals[path], operations)
@@ -189,7 +214,7 @@ def prepare_writeback(imported, wires, settings, annotations, project_path, recr
     # Do not rewrite a project solely due to whitespace differences on no-op runs.
     if json.loads(originals[project_path].decode('utf-8-sig')) != payload:
         updates[project_path] = project_bytes
-    return WritePlan(imported, project_path, originals, updates, updated_annotations, edits, list(dict.fromkeys(warnings)))
+    return WritePlan(imported, project_path, originals, updates, updated_annotations, edits, list(dict.fromkeys(warnings)), marker_additions)
 
 
 def net_signature(imported):

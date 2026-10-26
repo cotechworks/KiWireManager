@@ -13,7 +13,8 @@ from wiring_types import collect_wiring_types, clear_excluded_numbers, excluded_
 from wiring_types_tab import WiringTypesTab
 from settings_dialog import SettingsDialog
 from app_settings import default_settings_path, load_settings, save_settings
-from schematic_writeback import prepare_writeback, execute_writeback, MissingAnnotations, RecoveryRequired, recover_transaction
+from schematic_writeback import prepare_writeback, execute_writeback, MissingAnnotations, UnmanagedMarkedTexts, RecoveryRequired, recover_transaction
+from schematic_annotations import unmanaged_marker_warnings
 
 
 class Application:
@@ -126,7 +127,7 @@ class Application:
         threading.Thread(target=work, daemon=True).start()
         self.root.after(100, poll)
 
-    def write_schematic(self, recreate_missing=False):
+    def write_schematic(self, recreate_missing=False, delete_unmanaged=False):
         if self.import_result is None:
             messagebox.showinfo('回路図書込', '先に回路図フォルダーを取り込んでください。', parent=self.root)
             return
@@ -138,9 +139,19 @@ class Application:
         imported = self.import_result
         wires, settings, annotations = deepcopy(self.wires), deepcopy(self.settings()), deepcopy(self.annotations)
         def failure(error):
+            if isinstance(error, UnmanagedMarkedTexts):
+                self.import_tabs.set_diagnostics(error.warnings)
+                self.notebook.select(self.import_tabs.diagnostic_frame)
+                details = '\n'.join(error.warnings[:12])
+                if len(error.warnings) > 12:
+                    details += f'\nほか{len(error.warnings)-12}件（不足・警告タブに表示）'
+                if messagebox.askokcancel('管理情報にない線番テキストの削除',
+                        f'JSONにない目印付きテキスト {len(error.warnings)}件を削除して処理を続けますか？\n\n{details}\n\n削除は書込内容の確認後、バックアップを取って反映します。', parent=self.root):
+                    self.write_schematic(recreate_missing=recreate_missing, delete_unmanaged=True)
+                return
             if isinstance(error, MissingAnnotations):
                 if messagebox.askyesno('削除された線番テキスト', f'{error}\n\n再作成しますか？', parent=self.root):
-                    self.write_schematic(recreate_missing=True)
+                    self.write_schematic(recreate_missing=True, delete_unmanaged=delete_unmanaged)
                 return
             if isinstance(error, RecoveryRequired):
                 if messagebox.askyesno('未完了の書込', f'{error}\n\n前回処理前の状態へ復元しますか？', parent=self.root):
@@ -178,6 +189,8 @@ class Application:
                 warning_text += f'\nほか{len(plan.warnings)-12}件（不足・警告タブに表示）'
             text = (f'追加{additions}箇所・更新{updates}箇所・削除{deletions}箇所\n対象図面: ' + ', '.join(targets)
                     + f'\n\nバックアップ先: {imported.folder / "backup"}\n回路図とプロジェクトJSONを更新します。')
+            if getattr(plan, 'marker_additions', 0):
+                text += f'\n専用グループの目印追加: {plan.marker_additions}箇所'
             if warning_text:
                 text += '\n\n対象外・警告:\n' + warning_text
             if not messagebox.askyesno('書込内容の確認', text + '\n\n実行しますか？', parent=self.root):
@@ -188,7 +201,7 @@ class Application:
                 self.status.set(f'回路図への線番書込が完了しました。バックアップ: {backup}')
                 messagebox.showinfo('書込完了', f'バックアップ: {backup}', parent=self.root)
             self.run_write_task(lambda: execute_writeback(plan), completed, failure)
-        self.run_write_task(lambda: prepare_writeback(imported, wires, settings, annotations, self.path, recreate_missing), preview, failure)
+        self.run_write_task(lambda: prepare_writeback(imported, wires, settings, annotations, self.path, recreate_missing, delete_unmanaged), preview, failure)
 
     def import_kicad(self):
         folder = filedialog.askdirectory(parent=self.root, title='回路図を含むフォルダーを選択（サブフォルダーも検索）')
@@ -245,6 +258,7 @@ class Application:
         if include_single_terminal is None:
             include_single_terminal = self.include_single_terminal
         types, mapping, wiring_warnings = collect_wiring_types(result)
+        marker_warnings = unmanaged_marker_warnings(result, self.annotations)
         previous = deepcopy(self.settings())
         for kind in types:
             self.settings().wire_types.setdefault(kind, True)
@@ -262,11 +276,14 @@ class Application:
             self.changed()
         incomplete = [net for net in nets if len(net.terminals) < 2]
         messages = [f'接続先未確定（{len(net.terminals)}端子）: {net.root} / {net.name}' for net in incomplete]
-        self.import_tabs.show_result(result, messages + wiring_warnings)
+        self.import_tabs.show_result(result, messages + wiring_warnings + marker_warnings)
         self.refresh()
         self.clear()
         self.notebook.select(self.wire_tab)
         self.status.set(f'{len(nets)}ネット取込・{added}行追加。1端子ネット{skipped}件除外。接続先未確定{len(incomplete)}ネット。')
+        if marker_warnings:
+            self.notebook.select(self.import_tabs.diagnostic_frame)
+            self.status.set(f'管理情報にない目印付き線番テキスト {len(marker_warnings)}件を検出しました。不足・警告を確認してください。')
 
     def set_wiring_type(self, key, enabled):
         self.settings().wire_types[key] = enabled

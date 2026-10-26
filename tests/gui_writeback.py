@@ -9,7 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import tkinter as tk
 from kiwiremanager import Application
-from schematic_writeback import MissingAnnotations, RecoveryRequired
+from schematic_writeback import MissingAnnotations, UnmanagedMarkedTexts, RecoveryRequired
 from wire_model import Wire, TextAnnotation
 
 
@@ -49,10 +49,12 @@ try:
             assert not app.dirty
         with patch('kiwiremanager.prepare_writeback', return_value=plan), \
                 patch('kiwiremanager.execute_writeback') as execute, \
-                patch('kiwiremanager.messagebox.askyesno', return_value=False):
+                patch('kiwiremanager.messagebox.askyesno', return_value=False) as confirm:
+            plan.marker_additions = 1
             app.write_schematic()
             wait(root, app)
             assert not execute.called
+            assert '目印追加: 1箇所' in confirm.call_args.args[1]
         plan.edits = [SimpleNamespace(old_number='001', number=None)]
         with patch('kiwiremanager.prepare_writeback', return_value=plan), \
                 patch('kiwiremanager.execute_writeback') as execute, \
@@ -69,7 +71,7 @@ try:
                 patch('kiwiremanager.messagebox.showinfo'):
             app.write_schematic()
             wait(root, app)
-            assert prepare.call_args.args[-1] is True
+            assert prepare.call_args.args[-2] is True
         saved_updates = plan.updates
         plan.updates = {}
         plan.warnings = ['Recreation deferred: obsolete net']
@@ -86,6 +88,30 @@ try:
             wait(root, app)
             assert error.called
             assert 'manual edit' in app.import_tabs.diagnostics.get('1.0', 'end')
+        with patch('kiwiremanager.prepare_writeback', side_effect=UnmanagedMarkedTexts(['orphan'])), \
+                patch('kiwiremanager.messagebox.askokcancel', return_value=False) as confirm, \
+                patch('kiwiremanager.execute_writeback') as execute:
+            app.write_schematic()
+            wait(root, app)
+            assert confirm.called
+            assert not execute.called
+        with patch('kiwiremanager.prepare_writeback', side_effect=[UnmanagedMarkedTexts(['orphan']), plan]) as prepare, \
+                patch('kiwiremanager.messagebox.askokcancel', return_value=True), \
+                patch('kiwiremanager.messagebox.askyesno', return_value=False), \
+                patch('kiwiremanager.execute_writeback') as execute:
+            app.write_schematic()
+            wait(root, app)
+            assert prepare.call_args.args[-1] is True
+            assert not execute.called, 'cancelling the final preview must not delete anything'
+        with patch('kiwiremanager.prepare_writeback', side_effect=[UnmanagedMarkedTexts(['orphan']), MissingAnnotations(['missing']), plan]) as prepare, \
+                patch('kiwiremanager.messagebox.askokcancel', return_value=True), \
+                patch('kiwiremanager.messagebox.askyesno', return_value=True), \
+                patch('kiwiremanager.messagebox.showinfo'), \
+                patch('kiwiremanager.execute_writeback', return_value=folder / 'backup') as execute:
+            app.write_schematic()
+            wait(root, app)
+            assert execute.called
+            assert [call.args[-2:] for call in prepare.call_args_list] == [(False, False), (False, True), (True, True)]
         with patch('kiwiremanager.prepare_writeback', side_effect=RecoveryRequired(folder / 'backup/writeback.json')), \
                 patch('kiwiremanager.recover_transaction') as recover, \
                 patch('kiwiremanager.messagebox.askyesno', return_value=True), \

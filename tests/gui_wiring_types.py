@@ -57,6 +57,17 @@ try:
         assert not app.wiring_tab.variables
         assert not app.settings().wire_types
         assert app.notebook.tab(app.wiring_tab.frame, 'text') == '配線の種類'
+        from schematic_annotations import MARKER_GROUP
+        raw = path.read_text(encoding='utf-8')
+        raw = raw[:raw.rfind(')')] + f'''(group "{MARKER_GROUP}" (uuid "{uuid4()}")
+            (members "33333333-3333-4333-8333-333333333333")))'''
+        path.write_text(raw, encoding='utf-8')
+        marked_result = discover(folder)
+        marked_result.nets = result.nets
+        app.apply_import(marked_result)
+        assert app.notebook.select() == str(app.import_tabs.diagnostic_frame)
+        assert '33333333-3333-4333-8333-333333333333' in app.import_tabs.diagnostics.get('1.0', 'end')
+        assert '1件' in app.status.get()
         print('PASS wiring types tab, default on, checkbox toggle, reimport retention, JSON restore, new reset')
 finally:
     root.destroy()

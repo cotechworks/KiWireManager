@@ -106,7 +106,7 @@ class WritebackTests(unittest.TestCase):
         plan = self.plan([annotation])
         self.assertEqual(plan.edits[0].old_number, '001')
         self.assertEqual(plan.annotations[0].last_written_number, '001')
-        self.assertNotIn(self.sheet, plan.updates)
+        self.assertEqual(plan.marker_additions, 1)  # Upgrade the legacy managed text's marker.
 
     def test_app_number_overrides_edited_text_preserving_uuid_position_and_font(self):
         initial = self.plan()

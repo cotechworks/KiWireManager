@@ -9,6 +9,41 @@ from uuid import uuid4
 from kicad_import import children, value, parse_schematic
 from wire_model import TextAnnotation, validate_annotations
 
+MARKER_GROUP = 'KiWireManager.WireNumber/v1'
+
+
+def marked_text_ids(node):
+    """Discover all existing texts in our groups without consulting project JSON."""
+    items = {uid(item): item for item in node if isinstance(item, list) and uid(item)}
+    result = set()
+    for group in children(node, 'group'):
+        if len(group) < 2 or value(group[1]) != MARKER_GROUP:
+            continue
+        for identifier in first(group, 'members', ['members'])[1:]:
+            identifier = value(identifier)
+            item = items.get(identifier)
+            if item is None:  # A text may have been deleted in the editor.
+                continue
+            if item[0] != 'text':
+                raise ValueError('線番用グループに通常テキスト以外の要素があります。')
+            if identifier in result:
+                raise ValueError('同じ線番テキストが複数の専用グループに登録されています。')
+            result.add(identifier)
+    return result
+
+
+def unmanaged_marker_warnings(imported, annotations):
+    managed = {(a.sheet, a.text_uuid) for a in annotations}
+    warnings = []
+    for path, sheet in imported.sheets.items():
+        relative = path.relative_to(imported.folder).as_posix()
+        marked = marked_text_ids(sheet.node)
+        for text in children(sheet.node, 'text'):
+            identifier = uid(text)
+            if identifier in marked and (relative, identifier) not in managed:
+                warnings.append(f'管理情報にない線番テキスト: {relative} / {value(text[1])} / UUID: {identifier}')
+    return warnings
+
 
 def first(node, name, default=None):
     found = children(node, name)
@@ -262,8 +297,10 @@ def top_level_spans(text):
 def edit_texts(original, edits):
     """Preserve non-target text, formatting, position, and all other objects."""
     text = original.decode('utf-8-sig')
-    parse_schematic(text)
+    root = parse_schematic(text)
+    marked_text_ids(root)
     texts = {}
+    groups = []
     for start, end in top_level_spans(text):
         node = parse_schematic('(kicad_sch ' + text[start:end] + ')')[1]
         if node[0] == 'text':
@@ -271,6 +308,8 @@ def edit_texts(original, edits):
             if identifier in texts:
                 raise ValueError('テキストUUIDが重複しています。')
             texts[identifier] = (start, end, node)
+        elif node[0] == 'group':
+            groups.append((start, end, node))
     patches, additions = [], []
     for edit in edits:
         if edit.old_number is not None:
@@ -289,6 +328,34 @@ def edit_texts(original, edits):
         else:
             x, y = edit.position
             additions.append(f'\n\t(text "{edit.number}" (at {x:.6f} {y:.6f} 0) (effects (font (size 1.27 1.27))) (uuid "{edit.text_uuid}"))\n')
+    # Keep ordinary groups untouched. A text cannot belong to two groups in KiCad.
+    targets = {e.text_uuid for e in edits if e.number is not None}
+    removed = {e.text_uuid for e in edits if e.number is None}
+    existing = set(texts) - removed
+    existing.update(targets)
+    marked = set()
+    for start, end, group in groups:
+        members = [value(t) for t in first(group, 'members', ['members'])[1:]]
+        if value(group[1]) != MARKER_GROUP:
+            if targets.intersection(members) or removed.intersection(members):
+                raise ValueError('対象の線番テキストが利用者のグループに所属しています。KiCadでグループ解除後に再取込してください。')
+            continue
+        retained = [identifier for identifier in members if identifier in existing]
+        marked.update(retained)
+        if retained != members or not retained:
+            if retained:
+                from kicad_import import serialize
+                replacement = [item for item in group if not (isinstance(item, list) and item and item[0] == 'members')]
+                replacement.append(['members', *[json.dumps(t) for t in retained]])
+                patches.append((start, end, serialize(replacement)))
+            else:
+                group_id = uid(group)
+                if any(group_id in [value(t) for t in first(other, 'members', ['members'])[1:]]
+                       for _, _, other in groups if other is not group):
+                    raise ValueError('削除対象の専用グループが別グループに所属しています。KiCadでグループ解除後に再取込してください。')
+                patches.append((start, end, ''))
+    for identifier in sorted(targets - marked):
+        additions.append(f'\n\t(group "{MARKER_GROUP}" (uuid "{uuid4()}") (members "{identifier}"))\n')
     if additions:
         offset = text.rfind(')')
         patches.append((offset, offset, ''.join(additions)))
