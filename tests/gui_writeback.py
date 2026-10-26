@@ -70,6 +70,16 @@ try:
             app.write_schematic()
             wait(root, app)
             assert prepare.call_args.args[-1] is True
+        saved_updates = plan.updates
+        plan.updates = {}
+        plan.warnings = ['Recreation deferred: obsolete net']
+        with patch('kiwiremanager.prepare_writeback', return_value=plan), \
+                patch('kiwiremanager.messagebox.showinfo') as info:
+            app.write_schematic()
+            wait(root, app)
+            assert 'obsolete net' in info.call_args.args[1]
+            assert app.notebook.select() == str(app.import_tabs.diagnostic_frame)
+        plan.updates = saved_updates
         with patch('kiwiremanager.prepare_writeback', side_effect=ValueError('manual edit')), \
                 patch('kiwiremanager.messagebox.showerror') as error:
             app.write_schematic()

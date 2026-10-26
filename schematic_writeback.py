@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from kicad_import import children, discover, import_folder, parse_schematic, serialize, value
 from schematic_annotations import TextEdit, edit_texts, first, placement_candidates, uid
-from wire_model import TextAnnotation, validate_annotations
+from wire_model import TextAnnotation, validate_annotations, display_net_name
 from wiring_types import excluded_nets
 
 
@@ -140,18 +140,21 @@ def prepare_writeback(imported, wires, settings, annotations, project_path, recr
             raise ValueError(f'テキストUUIDが重複しています: {path.name}')
         number = numbers[annotation.net_key]
         if not text_nodes:
+            if key not in positions:
+                reason = ('現在の回路図にネットがありません' if not any(n.key == annotation.net_key for n in imported.nets)
+                          else '配線の配置位置を特定できません')
+                warnings.append(f'線番テキストの再作成を保留: {annotation.sheet} / {display_net_name(annotation.net_key)}: {reason}')
+                updated_annotations.append(annotation)
+                continue
             missing.append(f'{annotation.sheet}: {annotation.text_uuid}')
             if not recreate_missing:
                 continue
-            if key not in positions:
-                raise ValueError(f'再作成する配置候補がありません: {annotation.sheet}')
             identifier = str(uuid4())
             edits.append(TextEdit(path, annotation.net_key, number, identifier, None, positions[key]))
         else:
-            if value(text_nodes[0][1]) != annotation.last_written_number:
-                raise ValueError(f'線番テキストが手動変更されています。上書きしません: {annotation.sheet} / {annotation.text_uuid}')
             identifier = annotation.text_uuid
-            edits.append(TextEdit(path, annotation.net_key, number, identifier, annotation.last_written_number))
+            # The app owns the number; use the current text only as the edit baseline.
+            edits.append(TextEdit(path, annotation.net_key, number, identifier, value(text_nodes[0][1])))
         updated_annotations.append(TextAnnotation(path.relative_to(imported.folder).as_posix(), identifier, annotation.net_key, number))
     if missing and not recreate_missing:
         raise MissingAnnotations(missing)

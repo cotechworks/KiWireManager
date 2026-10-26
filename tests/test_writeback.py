@@ -54,6 +54,32 @@ class WritebackTests(unittest.TestCase):
         self.assertEqual(self.plan(plan.annotations).updates, {})
         self.assertEqual(len(discover(self.base).sheets), 1)
 
+    def test_missing_obsolete_net_does_not_block_recreation_of_current_net(self):
+        stale_key = self.key + '-obsolete'
+        annotation = TextAnnotation(self.sheet.name, str(uuid4()), self.key, '001')
+        stale = TextAnnotation(self.sheet.name, str(uuid4()), stale_key, '002')
+        self.wires.append(Wire(number='002', net_name=stale_key))
+        with self.assertRaises(MissingAnnotations) as error:
+            self.plan([stale, annotation])
+        self.assertEqual(error.exception.identifiers, [f'{self.sheet.name}: {annotation.text_uuid}'])
+        plan = self.plan([stale, annotation], recreate_missing=True)
+        self.assertEqual(len(plan.edits), 1)
+        self.assertEqual(plan.edits[0].net_key, self.key)
+        self.assertIn(stale, plan.annotations)
+        self.assertTrue(any('現在の回路図にネットがありません' in w for w in plan.warnings))
+        execute_writeback(plan, validator=lambda p: None)
+        repeated = self.plan(plan.annotations)
+        self.assertEqual(repeated.updates, {})
+
+    def test_missing_text_without_geometry_is_retained_as_warning(self):
+        annotation = TextAnnotation(self.sheet.name, str(uuid4()), self.key, '001')
+        with patch('schematic_writeback.placement_candidates', return_value=({}, [])):
+            for recreate in (False, True):
+                plan = self.plan([annotation], recreate_missing=recreate)
+                self.assertEqual(plan.edits, [])
+                self.assertEqual(plan.annotations, [annotation])
+                self.assertTrue(any('配線の配置位置を特定できません' in w for w in plan.warnings))
+
     def test_update_preserves_position_and_font(self):
         first_plan = self.plan()
         execute_writeback(first_plan, validator=lambda p: None)
@@ -70,15 +96,42 @@ class WritebackTests(unittest.TestCase):
         self.assertIn('(text "002" (at 77 88 90)', updated)
         self.assertIn('(size 2 2)', updated)
 
-    def test_missing_uuid_requires_confirmation_and_hand_edit_conflicts(self):
+    def test_missing_uuid_requires_confirmation_and_stale_history_is_updated(self):
         annotation = TextAnnotation('main.kicad_sch', str(uuid4()), self.key, '001')
         with self.assertRaises(MissingAnnotations):
             self.plan([annotation])
         self.assertEqual(len(self.plan([annotation], recreate_missing=True).edits), 1)
         annotation.text_uuid = '33333333-3333-4333-8333-333333333333'
         annotation.last_written_number = '009'
-        with self.assertRaisesRegex(ValueError, '手動変更'):
-            self.plan([annotation])
+        plan = self.plan([annotation])
+        self.assertEqual(plan.edits[0].old_number, '001')
+        self.assertEqual(plan.annotations[0].last_written_number, '001')
+        self.assertNotIn(self.sheet, plan.updates)
+
+    def test_app_number_overrides_edited_text_preserving_uuid_position_and_font(self):
+        initial = self.plan()
+        execute_writeback(initial, validator=lambda p: None)
+        identifier = initial.annotations[0].text_uuid
+        text = self.sheet.read_text(encoding='utf-8')
+        text = text.replace('(text "001" (at 20.000000 8.730000 0)',
+                            '(text "HAND" (at 77 88 90)')
+        text = text.replace('(size 1.27 1.27)', '(size 2 2)')
+        self.sheet.write_text(text, encoding='utf-8')
+        nets = self.imported.nets
+        self.imported = discover(self.base)
+        self.imported.nets = nets
+        self.wires[0].number = '007'
+        plan = self.plan(initial.annotations)
+        self.assertEqual(plan.edits[0].old_number, 'HAND')
+        backup = execute_writeback(plan, validator=lambda p: None)
+        self.assertIn(b'(text "HAND" (at 77 88 90)', (backup / self.sheet.name).read_bytes())
+        updated = self.sheet.read_text(encoding='utf-8')
+        self.assertIn('(text "007" (at 77 88 90)', updated)
+        self.assertIn('(size 2 2)', updated)
+        self.assertIn('(text "001" (at 5 5 0)', updated)
+        self.assertEqual(plan.annotations[0].text_uuid, identifier)
+        self.assertEqual(load_project(self.project)[2][0].last_written_number, '007')
+        self.assertEqual(self.plan(plan.annotations).updates, {})
 
     def test_changed_source_and_project_refused(self):
         plan = self.plan()

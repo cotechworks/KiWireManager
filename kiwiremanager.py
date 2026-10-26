@@ -161,7 +161,13 @@ class Application:
         def preview(plan):
             self.import_tabs.set_diagnostics(plan.warnings)
             if not plan.updates:
-                messagebox.showinfo('回路図書込', '変更する線番テキストはありません。', parent=self.root)
+                text = '変更する線番テキストはありません。'
+                if plan.warnings:
+                    self.notebook.select(self.import_tabs.diagnostic_frame)
+                    text += '\n\n対象外・警告:\n' + '\n'.join(plan.warnings[:12])
+                    if len(plan.warnings) > 12:
+                        text += f'\nほか{len(plan.warnings)-12}件（不足・警告タブに表示）'
+                messagebox.showinfo('回路図書込', text, parent=self.root)
                 return
             additions = sum(edit.old_number is None for edit in plan.edits)
             updates = sum(edit.old_number is not None and edit.number is not None and edit.old_number != edit.number for edit in plan.edits)
