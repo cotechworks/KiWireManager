@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from uuid import UUID, uuid4
 
+from wiring_types import validate_wiring_settings, excluded_nets, clear_excluded_numbers
+
 
 def display_net_name(name):
     marker = '.kicad_sch::'
@@ -30,8 +32,11 @@ class Numbering:
     prefix: str = ''
     start: int = 1
     digits: int = 3
+    wire_types: dict = field(default_factory=dict)
+    net_wire_types: dict = field(default_factory=dict)
 
     def validate(self):
+        validate_wiring_settings(self.wire_types, self.net_wire_types)
         if not isinstance(self.prefix, str):
             raise ValueError('接頭辞は文字列で指定してください。')
         if type(self.start) is not int or self.start < 0:
@@ -68,7 +73,8 @@ def validate_annotations(annotations):
         seen.add(key)
 
 
-def issues(wires, include_unnumbered=True):
+def issues(wires, include_unnumbered=True, settings=None):
+    excluded = excluded_nets(settings) if settings else set()
     result = []
     net_numbers = {}
     number_nets = {}
@@ -76,6 +82,10 @@ def issues(wires, include_unnumbered=True):
         if not all((wire.source_device.strip(), wire.source_terminal.strip(),
                     wire.target_device.strip(), wire.target_terminal.strip())):
             result.append(f'{i}行目: 接続元・接続先の機器番号と端子番号が必要です。')
+        if include_unnumbered and wire.net_name in excluded:
+            if wire.number:
+                result.append(f'{i}行目: 採番対象外のネットに線番が残っています。')
+            continue
         if include_unnumbered:
             if not wire.net_name.strip():
                 result.append(f'{i}行目: ネット名が未設定です。')
@@ -93,11 +103,14 @@ def issues(wires, include_unnumbered=True):
 
 def assign_numbers(wires, settings=None):
     # Numbering belongs to the net, independently of physical routing.
-    nets = dict.fromkeys(w.net_name for w in wires if w.net_name.strip())
+    if settings is not None:
+        settings.validate()
+    excluded = excluded_nets(settings) if settings else set()
+    nets = dict.fromkeys(w.net_name for w in wires if w.net_name.strip() and w.net_name not in excluded)
     if len(nets) > 999:
         raise ValueError('ネット数が999を超えるため採番できません。データは変更していません。')
     numbers = {net: f'{i:03d}' for i, net in enumerate(nets, 1)}
-    count = 0
+    count = clear_excluded_numbers(wires, settings) if settings else 0
     for wire in wires:
         if wire.net_name in numbers and wire.number != numbers[wire.net_name]:
             wire.number = numbers[wire.net_name]
@@ -165,8 +178,8 @@ def load_project(path):
         raise ValueError('プロジェクト形式が不正です。') from exc
 
 
-def export_csv(path, wires):
-    errors = issues(wires)
+def export_csv(path, wires, settings=None):
+    errors = issues(wires, settings=settings)
     if errors:
         raise ValueError('\n'.join(errors))
     with open(path, 'w', encoding='utf-8-sig', newline='') as stream:

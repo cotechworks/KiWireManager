@@ -53,6 +53,16 @@ try:
             app.write_schematic()
             wait(root, app)
             assert not execute.called
+        plan.edits = [SimpleNamespace(old_number='001', number=None)]
+        with patch('kiwiremanager.prepare_writeback', return_value=plan), \
+                patch('kiwiremanager.execute_writeback') as execute, \
+                patch('kiwiremanager.messagebox.askyesno', return_value=False) as confirm:
+            app.write_schematic()
+            wait(root, app)
+            assert '削除1箇所' in confirm.call_args.args[1]
+            assert '更新0箇所' in confirm.call_args.args[1]
+            assert not execute.called
+        plan.edits = [SimpleNamespace(old_number=None, number='001')]
         with patch('kiwiremanager.prepare_writeback', side_effect=[MissingAnnotations(['deleted text']), plan]) as prepare, \
                 patch('kiwiremanager.execute_writeback', return_value=folder / 'backup'), \
                 patch('kiwiremanager.messagebox.askyesno', return_value=True), \

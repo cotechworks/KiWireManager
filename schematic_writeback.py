@@ -12,6 +12,7 @@ from uuid import uuid4
 from kicad_import import children, discover, import_folder, parse_schematic, serialize, value
 from schematic_annotations import TextEdit, edit_texts, first, placement_candidates, uid
 from wire_model import TextAnnotation, validate_annotations
+from wiring_types import excluded_nets
 
 
 def digest(content):
@@ -92,9 +93,14 @@ def prepare_writeback(imported, wires, settings, annotations, project_path, recr
         raise ValueError('先にプロジェクトJSONを保存してください。')
     if project_path.is_relative_to(imported.folder / 'backup'):
         raise ValueError('バックアップ内のJSONを更新先には指定できません。')
+    excluded = excluded_nets(settings)
     numbers, number_nets = {}, {}
     for wire in wires:
         n = wire.number
+        if wire.net_name in excluded:
+            if n:
+                raise ValueError('採番対象外のネットに線番が残っています。採番を実行してください。')
+            continue
         if not wire.net_name.strip() or len(n) != 3 or not n.isascii() or not n.isdigit() or n == '000':
             raise ValueError('全ネットを001〜999で採番してから書込んでください。')
         if wire.net_name in numbers and numbers[wire.net_name] != n:
@@ -102,9 +108,9 @@ def prepare_writeback(imported, wires, settings, annotations, project_path, recr
         if n in number_nets and number_nets[n] != wire.net_name:
             raise ValueError('異なるネットの線番が重複しています。')
         numbers[wire.net_name], number_nets[n] = n, wire.net_name
-    if not numbers:
+    if not numbers and not excluded:
         raise ValueError('書込対象のネットがありません。')
-    positions, warnings = placement_candidates(imported)
+    positions, warnings = placement_candidates(imported, set(numbers)) if numbers else ({}, [])
     originals = {p: p.read_bytes() for p in imported.sheets}
     originals[project_path] = project_path.read_bytes()
     edits, updated_annotations, managed, missing = [], [], set(), []
@@ -116,6 +122,16 @@ def prepare_writeback(imported, wires, settings, annotations, project_path, recr
         if key in managed:
             raise ValueError('同じネット・シートに複数の管理テキストがあります。')
         managed.add(key)
+        if annotation.net_key in excluded:
+            text_nodes = [n for n in children(imported.sheets[path].node, 'text') if uid(n) == annotation.text_uuid]
+            if len(text_nodes) > 1:
+                raise ValueError(f'テキストUUIDが重複しています: {path.name}')
+            if text_nodes:
+                if value(text_nodes[0][1]) != annotation.last_written_number:
+                    raise ValueError(f'線番テキストが手動変更されています。削除しません: {annotation.sheet} / {annotation.text_uuid}')
+                edits.append(TextEdit(path, annotation.net_key, None, annotation.text_uuid, annotation.last_written_number))
+            # A missing text is already deleted; just forget its managed UUID.
+            continue
         if annotation.net_key not in numbers:
             updated_annotations.append(annotation)
             continue
@@ -152,7 +168,7 @@ def prepare_writeback(imported, wires, settings, annotations, project_path, recr
         identifier = str(uuid4())
         edits.append(TextEdit(path, net_key, numbers[net_key], identifier, None, position))
         updated_annotations.append(TextAnnotation(path.relative_to(imported.folder).as_posix(), identifier, net_key, numbers[net_key]))
-    represented = {edit.net_key for edit in edits}
+    represented = {edit.net_key for edit in edits if edit.number is not None}
     for net in numbers.keys() - represented:
         warnings.append(f'配置対象の配線がない、または座標を確定できないネット: {net}')
     grouped = defaultdict(list)

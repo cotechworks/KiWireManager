@@ -26,6 +26,7 @@ root = tk.Tk()
 root.withdraw()
 try:
     app = Application(root, settings_path=Path(settings_folder.name) / "settings.json")
+    app.include_single_terminal = True  # This smoke test intentionally checks every imported net.
     with patch('kiwiremanager.filedialog.askdirectory', return_value=str(folder)), \
             patch('kiwiremanager.messagebox.showerror') as errors:
         app.import_kicad()
@@ -41,7 +42,7 @@ try:
     result = app.import_result
     assert {w.net_name for w in app.wires} == {n.key for n in result.nets}
     assert len(app.wires) == sum(max(1, len(n.terminals) - 1) for n in result.nets)
-    assert len(app.notebook.tabs()) == 3
+    assert len(app.notebook.tabs()) == 4
     assert not any(isinstance(w, tk.Toplevel) for w in root.winfo_children())
     assert len(app.import_tabs.hierarchy.get_children()) == len(result.roots)
     app.number()
@@ -73,7 +74,7 @@ try:
         finally:
             app.wires = all_wires
     assert hashes(folder) == before, 'original schematic changed'
-    print('PASS bulk import GUI, all nets, 3 tabs, numbering, JSON, complete-row CSV, incomplete-row export block, source hashes')
+    print('PASS bulk import GUI, all nets, 4 tabs, numbering, JSON, complete-row CSV, incomplete-row export block, source hashes')
     print('rows=%d incomplete_rows=%d' % (len(app.wires), len(incomplete)))
     print('sheets=%d roots=%d nets=%d terminals=%d diagnostics=%d' % (
         len(result.sheets), len(result.roots), len(result.nets),

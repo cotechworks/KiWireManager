@@ -83,9 +83,10 @@ def on_segment(point, a, b):
     return abs((x-a[0])*(b[1]-a[1]) - (y-a[1])*(b[0]-a[0])) < 1e-6 and min(a[0], b[0])-1e-6 <= x <= max(a[0], b[0])+1e-6 and min(a[1], b[1])-1e-6 <= y <= max(a[1], b[1])+1e-6
 
 
-def placement_candidates(imported):
-    """Return (sheet file, net key) -> text position, plus skipped reasons."""
-    candidates, warnings = {}, []
+def resolved_segments(imported):
+    """Match physical wire segments to imported net keys using existing geometry."""
+    from wiring_types import read_wiring_type
+    resolved, all_instances, warnings = [], [], []
     for root in imported.roots:
         union = Union()
         seeds, segments, globals_, locals_, hierarchical = [], [], {}, {}, {}
@@ -108,7 +109,7 @@ def placement_candidates(imported):
                 if len(coords) == 2:
                     a, b = map(xy, coords)
                     points.update((a, b))
-                    wires.append((a, b))
+                    wires.append((a, b, read_wiring_type(wire).key))
             for junction in children(node, 'junction'):
                 at = first(junction, 'at')
                 if at:
@@ -154,12 +155,12 @@ def placement_candidates(imported):
                     child_key = hierarchical.get((child_context, value(pin[1])))
                     if child_key is not None:
                         union.join(key(point), child_key)
-            for a, b in wires:
+            for a, b, kind in wires:
                 union.join(key(a), key(b))
                 for point in points:
                     if on_segment(point, a, b):
                         union.join(key(a), key(point))
-                segments.append((path, context, a, b, key(a)))
+                segments.append((path, context, a, b, key(a), kind))
         instance(root, (uid(imported.sheets[root].node),), [])
         net_lookup = defaultdict(set)
         root_name = root.relative_to(imported.folder).as_posix()
@@ -184,38 +185,51 @@ def placement_candidates(imported):
                 connected[union.find(point)].update(nets)
             elif len(nets) > 1:
                 warnings.append(f'同じ機器・ピン番号が複数ネットに存在するため、この端子からの配置は対象外: {ref}:{pin}')
-        by_net = defaultdict(list)
-        for path, context, a, b, point in segments:
+        for path, context, a, b, point, kind in segments:
             nets = connected[union.find(point)]
             if len(nets) != 1:
                 if len(nets) > 1:
                     raise ValueError(f'配線とネットの対応が競合しています: {path.name}: {a} {sorted(nets)}')
                 continue
             net_key = next(iter(nets))
-            if a[1] == b[1] and a != b:
-                position = ((a[0]+b[0])/2, a[1]-1.27)
-                priority = (0, -abs(a[0]-b[0]), a, b)
-            elif a[0] == b[0] and a != b:
-                position = (a[0]+1.27, (a[1]+b[1])/2)
-                priority = (1, -abs(a[1]-b[1]), a, b)
-            else:
-                continue
-            by_net[(path, context, net_key)].append((priority, position))
-        physical = defaultdict(dict)
-        for (path, context, net_key), options in by_net.items():
-            position = min(options)[1]
-            physical[path, context][net_key] = position
-        # Shared files must yield the same net set in every placement. Otherwise
-        # one physical text cannot represent instance-specific numbering.
-        path_instances = defaultdict(list)
-        for path, context, names in instances:
-            path_instances[path].append(physical.get((path, context), {}))
-        for path, mappings in path_instances.items():
-            if mappings and any(set(m) != set(mappings[0]) for m in mappings[1:]):
-                raise ValueError(f'同じ子シートの複数配置でネットが異なります: {path.name}')
-            if mappings:
-                for net_key, position in mappings[0].items():
-                    candidates[path, net_key] = position
+            resolved.append((path, context, a, b, net_key, kind))
+        all_instances.extend(instances)
+    return resolved, all_instances, list(dict.fromkeys(warnings))
+
+
+def placement_candidates(imported, eligible_nets=None):
+    """Return (sheet file, net key) -> text position, plus skipped reasons."""
+    segments, instances, warnings = resolved_segments(imported)
+    candidates = {}
+    by_net = defaultdict(list)
+    for path, context, a, b, net_key, kind in segments:
+        if eligible_nets is not None and net_key not in eligible_nets:
+            continue
+        if a[1] == b[1] and a != b:
+            position = ((a[0]+b[0])/2, a[1]-1.27)
+            priority = (0, -abs(a[0]-b[0]), a, b)
+        elif a[0] == b[0] and a != b:
+            position = (a[0]+1.27, (a[1]+b[1])/2)
+            priority = (1, -abs(a[1]-b[1]), a, b)
+        else:
+            continue
+        by_net[(path, context, net_key)].append((priority, position))
+
+    physical = defaultdict(dict)
+    for (path, context, net_key), options in by_net.items():
+        position = min(options)[1]
+        physical[path, context][net_key] = position
+    # Shared files must yield the same net set in every placement. Otherwise
+    # one physical text cannot represent instance-specific numbering.
+    path_instances = defaultdict(list)
+    for path, context, names in instances:
+        path_instances[path].append(physical.get((path, context), {}))
+    for path, mappings in path_instances.items():
+        if mappings and any(set(m) != set(mappings[0]) for m in mappings[1:]):
+            raise ValueError(f'同じ子シートの複数配置でネットが異なります: {path.name}')
+        if mappings:
+            for net_key, position in mappings[0].items():
+                candidates[path, net_key] = position
     return candidates, warnings
 
 
@@ -223,7 +237,7 @@ def placement_candidates(imported):
 class TextEdit:
     sheet: object
     net_key: str
-    number: str
+    number: str | None
     text_uuid: str
     old_number: str | None
     position: tuple | None = None
@@ -265,7 +279,9 @@ def edit_texts(original, edits):
             start, end, node = texts[edit.text_uuid]
             if value(node[1]) != edit.old_number:
                 raise ValueError('線番テキストが手動変更されています。')
-            if edit.number != edit.old_number:
+            if edit.number is None:
+                patches.append((start, end, ''))
+            elif edit.number != edit.old_number:
                 token = re.match(r'\(text\s+("(?:\\.|[^"\\])*")', text[start:end])
                 if not token:
                     raise ValueError('更新対象のテキスト形式が不正です。')

@@ -49,7 +49,7 @@ try:
             app.import_kicad()
             wait_idle(root, app)
             assert [w.wire_id for w in app.wires] == identities
-        assert len(app.notebook.tabs()) == 3
+        assert len(app.notebook.tabs()) == 4
         hierarchy = app.import_tabs.hierarchy
         main_item = hierarchy.get_children()[0]
         assert len(hierarchy.get_children(main_item)) == 2
@@ -123,7 +123,7 @@ try:
         app.include_single_terminal = False
         app.apply_import(result)
         assert len(app.wires) == 4, 'turning off must not delete registered rows'
-        assert len(app.notebook.tabs()) == 3
+        assert len(app.notebook.tabs()) == 4
         app.wires[0].net_name = 'C:/project/main.kicad_sch::Power'
         app.refresh()
         app.table.selection_set(app.wires[0].wire_id)
@@ -134,7 +134,7 @@ try:
         app.update()
         assert app.wires[0].net_name == 'C:/project/main.kicad_sch::Power'
         assert not any(isinstance(w, tk.Toplevel) for w in root.winfo_children())
-    print('PASS bulk registration, chain order, 3 tabs, hierarchy/warnings, repeat import, numbering, JSON, failure and stale import')
+    print('PASS bulk registration, chain order, 4 tabs, hierarchy/warnings, repeat import, numbering, JSON, failure and stale import')
     print('PASS settings default, cancel, apply, single-terminal include/exclude, existing row retention')
     print('PASS persisted preferences, restart restore, failed save preserves current setting and dialog')
 finally:

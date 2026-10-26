@@ -9,6 +9,8 @@ from tkinter import filedialog, messagebox, ttk
 from wire_model import Numbering, Wire, assign_numbers, export_csv, issues, load_project, save_project, display_net_name
 from kicad_import import import_folder, merge_imported_wires
 from kicad_dialog import ImportTabs
+from wiring_types import collect_wiring_types, clear_excluded_numbers, excluded_nets
+from wiring_types_tab import WiringTypesTab
 from settings_dialog import SettingsDialog
 from app_settings import default_settings_path, load_settings, save_settings
 from schematic_writeback import prepare_writeback, execute_writeback, MissingAnnotations, RecoveryRequired, recover_transaction
@@ -48,6 +50,7 @@ class Application:
         self.notebook.pack(fill='both', expand=True, padx=10)
         self.wire_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.wire_tab, text='電線一覧')
+        self.wiring_tab = WiringTypesTab(self.notebook, self.set_wiring_type)
         self.import_tabs = ImportTabs(self.notebook)
         numbering = ttk.LabelFrame(self.wire_tab, text='ネットの初出順に001〜999を割当。同じネットは線番を共有。未設定は保留します。', padding=10)
         numbering.pack(fill='x', padx=10)
@@ -161,12 +164,13 @@ class Application:
                 messagebox.showinfo('回路図書込', '変更する線番テキストはありません。', parent=self.root)
                 return
             additions = sum(edit.old_number is None for edit in plan.edits)
-            updates = sum(edit.old_number is not None and edit.old_number != edit.number for edit in plan.edits)
+            updates = sum(edit.old_number is not None and edit.number is not None and edit.old_number != edit.number for edit in plan.edits)
+            deletions = sum(edit.number is None for edit in plan.edits)
             targets = [p.name for p in plan.updates if p != plan.project_path]
             warning_text = '\n'.join(plan.warnings[:12])
             if len(plan.warnings) > 12:
                 warning_text += f'\nほか{len(plan.warnings)-12}件（不足・警告タブに表示）'
-            text = (f'追加{additions}箇所・更新{updates}箇所\n対象図面: ' + ', '.join(targets)
+            text = (f'追加{additions}箇所・更新{updates}箇所・削除{deletions}箇所\n対象図面: ' + ', '.join(targets)
                     + f'\n\nバックアップ先: {imported.folder / "backup"}\n回路図とプロジェクトJSONを更新します。')
             if warning_text:
                 text += '\n\n対象外・警告:\n' + warning_text
@@ -206,13 +210,16 @@ class Application:
             self.import_button.configure(state='normal')
             if generation != self.import_generation:
                 return
+            if not error:
+                try:
+                    self.apply_import(result, include_single_terminal)
+                except ValueError as exc:
+                    error = str(exc)
             if error:
                 self.status.set('KiCad取込に失敗しました。電線一覧は変更していません。')
                 self.import_tabs.set_diagnostics([error])
                 self.notebook.select(self.import_tabs.diagnostic_frame)
                 messagebox.showerror('KiCad取込エラー', error, parent=self.root)
-            else:
-                self.apply_import(result, include_single_terminal)
 
         threading.Thread(target=work, daemon=True).start()
         self.root.after(100, poll)
@@ -231,21 +238,37 @@ class Application:
     def apply_import(self, result, include_single_terminal=None):
         if include_single_terminal is None:
             include_single_terminal = self.include_single_terminal
+        types, mapping, wiring_warnings = collect_wiring_types(result)
+        previous = deepcopy(self.settings())
+        for kind in types:
+            self.settings().wire_types.setdefault(kind, True)
+        self.settings().net_wire_types.update(mapping)
+        if previous != self.settings():
+            self.changed()
         nets = [net for net in result.nets if include_single_terminal or len(net.terminals) != 1]
         skipped = len(result.nets) - len(nets)
         wires = merge_imported_wires(self.wires, nets)
         added = len(wires) - len(self.wires)
         self.wires = wires
         self.import_result = result
-        if added:
+        removed = clear_excluded_numbers(self.wires, self.settings())
+        if added or removed:
             self.changed()
         incomplete = [net for net in nets if len(net.terminals) < 2]
         messages = [f'接続先未確定（{len(net.terminals)}端子）: {net.root} / {net.name}' for net in incomplete]
-        self.import_tabs.show_result(result, messages)
+        self.import_tabs.show_result(result, messages + wiring_warnings)
         self.refresh()
         self.clear()
         self.notebook.select(self.wire_tab)
         self.status.set(f'{len(nets)}ネット取込・{added}行追加。1端子ネット{skipped}件除外。接続先未確定{len(incomplete)}ネット。')
+
+    def set_wiring_type(self, key, enabled):
+        self.settings().wire_types[key] = enabled
+        clear_excluded_numbers(self.wires, self.settings())
+        self.changed()
+        self.refresh()
+        self.clear()
+        self.status.set(f'採番対象外 {len(excluded_nets(self.settings()))}ネット。回路図の線番削除は「回路図へ書込」で反映します。')
 
     def add_imported_wire(self, wire):
         endpoints = {(wire.source_device, wire.source_terminal), (wire.target_device, wire.target_terminal)}
@@ -267,6 +290,7 @@ class Application:
         return self.numbering_settings
 
     def refresh(self):
+        self.wiring_tab.show(self.settings().wire_types, self.settings().net_wire_types)
         self.table.delete(*self.table.get_children())
         for wire in self.wires:
             self.table.insert('', 'end', iid=wire.wire_id, values=[display_net_name(wire.net_name) if c == 'net_name' else getattr(wire, c) for c in self.columns])
@@ -319,6 +343,7 @@ class Application:
             wire = self.input_wire(selection[0])
             index = next(i for i, w in enumerate(self.wires) if w.wire_id == wire.wire_id)
             self.wires[index] = wire
+            clear_excluded_numbers(self.wires, self.settings())
             self.changed()
             self.refresh()
             self.table.selection_set(wire.wire_id)
@@ -337,7 +362,7 @@ class Application:
             messagebox.showerror('採番できません', str(exc), parent=self.root)
 
     def check(self):
-        errors = issues(self.wires)
+        errors = issues(self.wires, settings=self.settings())
         messagebox.showinfo('検証結果', '\n'.join(errors) if errors else '問題はありません。', parent=self.root)
 
     def confirm_discard(self):
@@ -393,7 +418,7 @@ class Application:
             return False
 
     def export(self):
-        errors = issues(self.wires)
+        errors = issues(self.wires, settings=self.settings())
         if errors:
             messagebox.showerror('CSV出力できません', '\n'.join(errors), parent=self.root)
             return
@@ -401,7 +426,7 @@ class Application:
                                            filetypes=[('配線表CSV', '*.csv')])
         if path:
             try:
-                export_csv(path, self.wires)
+                export_csv(path, self.wires, self.settings())
                 self.status.set(f'CSV出力しました: {path}')
             except (OSError, ValueError) as exc:
                 messagebox.showerror('CSV出力エラー', str(exc), parent=self.root)
@@ -414,6 +439,7 @@ class Application:
         self.import_generation += 1
         self.import_result = None
         self.import_tabs.clear()
+        self.wiring_tab.show({}, {})
         self.notebook.select(self.wire_tab)
 
 
