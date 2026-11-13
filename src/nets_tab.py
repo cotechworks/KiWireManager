@@ -1,4 +1,5 @@
 """Read-only per-net view of imported and registered connections."""
+import tkinter as tk
 from collections import defaultdict
 from tkinter import ttk
 from wire_model import display_net_name
@@ -39,20 +40,43 @@ def net_rows(wires, imported=None, include_single_terminal=True):
 
 
 class NetsTab:
-    def __init__(self, notebook):
+    def __init__(self, notebook, changed=None, number_all=None):
+        self.changed = changed
+        self.keys = {}
         self.frame = ttk.Frame(notebook, padding=10)
         notebook.add(self.frame, text='ネット一覧')
-        ttk.Label(self.frame, text='取込ネットと登録済みネットの一覧（表示専用）。端子数は取込情報があればその件数、なければ登録済み電線から集計します。').pack(anchor='w')
+        ttk.Label(self.frame, text='ネット選択後に線番を入力・反映できます。空欄で固定解除。端子数は取込情報があればその件数、なければ登録済み電線から集計します。').pack(anchor='w')
+        editor = ttk.Frame(self.frame)
+        editor.pack(fill='x', pady=8)
+        ttk.Label(editor, text='固定線番（例：P24）').pack(side='left')
+        self.number = tk.StringVar()
+        ttk.Entry(editor, textvariable=self.number, width=20).pack(side='left', padx=8)
+        ttk.Button(editor, text='線番を反映', command=self.apply).pack(side='left')
+        ttk.Button(editor, text='残りのネットを採番', command=number_all).pack(side='left', padx=8)
         self.table = ttk.Treeview(self.frame, columns=('name','number','wires','terminals','state','root'), show='headings')
         for column, title, width in zip(self.table['columns'], ('ネット名','線番','電線数','端子数','状態','ルート'), (200,100,70,70,120,250)):
             self.table.heading(column, text=title)
             self.table.column(column, width=width)
+        self.table.bind('<<TreeviewSelect>>', self.select)
         scroll = ttk.Scrollbar(self.frame, orient='vertical', command=self.table.yview)
         self.table.configure(yscrollcommand=scroll.set)
         scroll.pack(side='right', fill='y')
         self.table.pack(fill='both', expand=True)
 
     def show(self, wires, imported=None, include_single_terminal=True):
+        self.keys = {}
+        self.number.set('')
         self.table.delete(*self.table.get_children())
         for index, (key, values) in enumerate(net_rows(wires, imported, include_single_terminal)):
+            self.keys[str(index)] = key
             self.table.insert('', 'end', iid=str(index), values=values)
+
+    def select(self, event=None):
+        selection = self.table.selection()
+        if selection:
+            self.number.set(self.table.item(selection[0], 'values')[1])
+
+    def apply(self):
+        selection = self.table.selection()
+        if self.changed:
+            self.changed(self.keys[selection[0]] if selection else None, self.number.get().strip())

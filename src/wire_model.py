@@ -32,11 +32,16 @@ class Numbering:
     prefix: str = ''
     start: int = 1
     digits: int = 3
+    manual_numbers: dict = field(default_factory=dict)
     wire_types: dict = field(default_factory=dict)
     net_wire_types: dict = field(default_factory=dict)
 
     def validate(self):
         validate_wiring_settings(self.wire_types, self.net_wire_types)
+        if not isinstance(self.manual_numbers, dict) or any(not isinstance(k, str) or not k.strip() or not valid_number(v) for k,v in self.manual_numbers.items()):
+            raise ValueError('手入力線番の設定が不正です。')
+        if len(set(self.manual_numbers.values())) != len(self.manual_numbers):
+            raise ValueError('異なるネットで手入力線番が重複しています。')
         if not isinstance(self.prefix, str):
             raise ValueError('接頭辞は文字列で指定してください。')
         if type(self.start) is not int or self.start < 0:
@@ -53,6 +58,29 @@ class TextAnnotation:
     last_written_number: str
 
 
+def valid_number(number):
+    return isinstance(number, str) and bool(number.strip()) and number == number.strip() and all(ch.isprintable() for ch in number)
+
+
+def set_net_number(wires, settings, net, number):
+    settings.validate()
+    targets = [w for w in wires if w.net_name == net]
+    if not targets:
+        raise ValueError('電線未登録のネットは編集できません。')
+    if number and not valid_number(number):
+        raise ValueError('線番は改行や制御文字を含まない文字列で指定してください。')
+    if number and net in excluded_nets(settings):
+        raise ValueError('採番対象外のネットには線番を設定できません。')
+    if number and (any(w.net_name != net and w.number == number for w in wires) or any(k != net and v == number for k,v in settings.manual_numbers.items())):
+        raise ValueError('別ネットで使用中の線番です。')
+    if number:
+        settings.manual_numbers[net] = number
+    else:
+        settings.manual_numbers.pop(net, None)
+    for wire in targets:
+        wire.number = number
+
+
 def validate_annotations(annotations):
     seen = set()
     for annotation in annotations:
@@ -65,8 +93,8 @@ def validate_annotations(annotations):
         except ValueError as exc:
             raise ValueError('線番テキストのUUIDが不正です。') from exc
         number = annotation.last_written_number
-        if len(number) != 3 or not number.isascii() or not number.isdigit() or number == '000':
-            raise ValueError('前回書込線番は001〜999で指定してください。')
+        if not valid_number(number):
+            raise ValueError('前回書込線番に空欄や制御文字は使用できません。')
         key = (annotation.sheet, identifier)
         if key in seen:
             raise ValueError('同じシートのテキストUUIDが重複しています。')
@@ -89,8 +117,8 @@ def issues(wires, include_unnumbered=True, settings=None):
         if include_unnumbered:
             if not wire.net_name.strip():
                 result.append(f'{i}行目: ネット名が未設定です。')
-            elif len(wire.number) != 3 or not wire.number.isascii() or not wire.number.isdigit() or wire.number == '000':
-                result.append(f'{i}行目: 線番は001〜999の3桁で採番してください。')
+            elif not valid_number(wire.number):
+                result.append(f'{i}行目: 線番を入力または採番してください。')
             else:
                 if wire.net_name in net_numbers and net_numbers[wire.net_name] != wire.number:
                     result.append(f'{i}行目: 同じネットに異なる線番があります。')
@@ -109,7 +137,15 @@ def assign_numbers(wires, settings=None):
     nets = dict.fromkeys(w.net_name for w in wires if w.net_name.strip() and w.net_name not in excluded)
     if len(nets) > 999:
         raise ValueError('ネット数が999を超えるため採番できません。データは変更していません。')
-    numbers = {net: f'{i:03d}' for i, net in enumerate(nets, 1)}
+    fixed = settings.manual_numbers if settings else {}
+    numbers = {net: fixed[net] for net in nets if net in fixed}
+    available = iter(f'{i:03d}' for i in range(1,1000) if f'{i:03d}' not in fixed.values())
+    for net in nets:
+        if net not in numbers:
+            try:
+                numbers[net] = next(available)
+            except StopIteration:
+                raise ValueError('空き線番が不足しています。データは変更していません。') from None
     count = clear_excluded_numbers(wires, settings) if settings else 0
     for wire in wires:
         if wire.net_name in numbers and wire.number != numbers[wire.net_name]:

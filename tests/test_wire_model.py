@@ -53,7 +53,7 @@ class WireModelTests(unittest.TestCase):
         w = wire('old')
         self.assertTrue(issues([w]))
         w.net_name = 'new'
-        self.assertTrue(issues([w]))
+        self.assertEqual(issues([w]), [])
         assign_numbers([w])
         self.assertEqual(w.number, '001')
         self.assertEqual(issues([w]), [])
@@ -81,7 +81,7 @@ class WireModelTests(unittest.TestCase):
         assign_numbers([a, b])
         self.assertEqual([a.number, b.number], ['001', '002'])
         self.assertEqual(issues([a, b]), [])
-        for number in ('000', '1000', '12', 'abc', '???'):
+        for number in ('', ' ', 'P\n24', 'P\t24', 'P\x0024'):
             a.number = number
             self.assertTrue(issues([a]))
 

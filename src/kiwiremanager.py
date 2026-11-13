@@ -6,7 +6,7 @@ from copy import deepcopy
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from wire_model import Numbering, Wire, assign_numbers, export_csv, issues, load_project, save_project, display_net_name
+from wire_model import set_net_number, Numbering, Wire, assign_numbers, export_csv, issues, load_project, save_project, display_net_name
 from kicad_import import import_folder, merge_imported_wires
 from kicad_dialog import ImportTabs
 from wiring_types import collect_wiring_types, clear_excluded_numbers, excluded_nets
@@ -53,13 +53,13 @@ class Application:
         self.notebook.pack(fill='both', expand=True, padx=10)
         self.wire_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.wire_tab, text='電線一覧')
-        self.nets_tab = NetsTab(self.notebook)
+        self.nets_tab = NetsTab(self.notebook, self.update_net_number, self.number)
         self.wiring_tab = WiringTypesTab(self.notebook, self.set_wiring_type)
         self.import_tabs = ImportTabs(self.notebook)
         numbering = ttk.LabelFrame(self.wire_tab, text='ネットの初出順に001〜999を割当。同じネットは線番を共有。未設定は保留します。', padding=10)
         numbering.pack(fill='x', padx=10)
         self.numbering_settings = Numbering()
-        ttk.Button(numbering, text='3桁通し番号を採番', command=self.number).pack(side='left', padx=12)
+        ttk.Button(numbering, text='線番を採番', command=self.number).pack(side='left', padx=12)
         ttk.Button(numbering, text='検証', command=self.check).pack(side='left')
         table_frame = ttk.Frame(self.wire_tab, padding=10)
         table_frame.pack(fill='both', expand=True)
@@ -379,6 +379,18 @@ class Application:
             self.table.selection_set(wire.wire_id)
         except ValueError as exc:
             messagebox.showerror('入力エラー', str(exc), parent=self.root)
+
+    def update_net_number(self, net, number):
+        try:
+            if net is None:
+                raise ValueError('ネットを選択してください。')
+            set_net_number(self.wires, self.settings(), net, number)
+            self.changed()
+            self.refresh()
+            self.clear()
+            self.status.set('同一ネットの全電線へ反映しました。手入力線番は自動採番でも維持します。')
+        except ValueError as exc:
+            messagebox.showerror('線番を反映できません', str(exc), parent=self.root)
 
     def number(self):
         try:

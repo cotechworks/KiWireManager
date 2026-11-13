@@ -44,7 +44,7 @@ class AnnotationTests(unittest.TestCase):
     def test_invalid_annotation_does_not_overwrite_project(self):
         valid = self.annotation()
         invalid = [replace(valid, text_uuid='invalid'), replace(valid, sheet=''),
-                   replace(valid, net_key=5), replace(valid, last_written_number='000')]
+                   replace(valid, net_key=5), replace(valid, last_written_number='P\n24')]
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'project.json'
             save_project(path, [], Numbering(), [valid])
