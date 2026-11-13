@@ -45,11 +45,12 @@ try:
             app.import_kicad()
             wait_idle(root, app)
             assert len(app.wires) == 4
+            assert len(app.nets_tab.table.get_children()) == 3
             identities = [w.wire_id for w in app.wires]
             app.import_kicad()
             wait_idle(root, app)
             assert [w.wire_id for w in app.wires] == identities
-        assert len(app.notebook.tabs()) == 4
+        assert len(app.notebook.tabs()) == 5
         hierarchy = app.import_tabs.hierarchy
         main_item = hierarchy.get_children()[0]
         assert len(hierarchy.get_children(main_item)) == 2
@@ -87,6 +88,7 @@ try:
             release.set()
             wait_idle(root, app)
         assert not app.wires, 'stale import must not modify a new project'
+        app.import_result = result  # Restore catalog only; keep the new project wire list empty.
         app.include_single_terminal = False
         assert app.include_single_terminal is False
         dialog = app.open_settings()
@@ -98,6 +100,7 @@ try:
         dialog.include_single_terminal.set(False)
         dialog.apply()
         assert app.include_single_terminal is False
+        assert len(app.nets_tab.table.get_children()) == 2, 'single-terminal nets must disappear immediately'
         restarted_root = tk.Toplevel(root)
         restarted = Application(restarted_root, settings_path=app.settings_path)
         assert restarted.include_single_terminal is False, 'saved settings must survive restart'
@@ -123,7 +126,7 @@ try:
         app.include_single_terminal = False
         app.apply_import(result)
         assert len(app.wires) == 4, 'turning off must not delete registered rows'
-        assert len(app.notebook.tabs()) == 4
+        assert len(app.notebook.tabs()) == 5
         app.wires[0].net_name = 'C:/project/main.kicad_sch::Power'
         app.refresh()
         app.table.selection_set(app.wires[0].wire_id)
@@ -134,7 +137,7 @@ try:
         app.update()
         assert app.wires[0].net_name == 'C:/project/main.kicad_sch::Power'
         assert not any(isinstance(w, tk.Toplevel) for w in root.winfo_children())
-    print('PASS bulk registration, chain order, 4 tabs, hierarchy/warnings, repeat import, numbering, JSON, failure and stale import')
+    print('PASS bulk registration, chain order, 5 tabs, hierarchy/warnings, repeat import, numbering, JSON, failure and stale import')
     print('PASS settings default, cancel, apply, single-terminal include/exclude, existing row retention')
     print('PASS persisted preferences, restart restore, failed save preserves current setting and dialog')
 finally:

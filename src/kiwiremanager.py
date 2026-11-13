@@ -11,6 +11,7 @@ from kicad_import import import_folder, merge_imported_wires
 from kicad_dialog import ImportTabs
 from wiring_types import collect_wiring_types, clear_excluded_numbers, excluded_nets
 from wiring_types_tab import WiringTypesTab
+from nets_tab import NetsTab
 from settings_dialog import SettingsDialog
 from app_settings import default_settings_path, load_settings, save_settings
 from schematic_writeback import prepare_delete_all, prepare_writeback, execute_writeback, MissingAnnotations, UnmanagedMarkedTexts, RecoveryRequired, recover_transaction
@@ -52,7 +53,8 @@ class Application:
         self.notebook.pack(fill='both', expand=True, padx=10)
         self.wire_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.wire_tab, text='電線一覧')
-        self.wiring_tab = WiringTypesTab(self.notebook, self.set_wiring_type, self.set_wiring_prefix)
+        self.nets_tab = NetsTab(self.notebook)
+        self.wiring_tab = WiringTypesTab(self.notebook, self.set_wiring_type)
         self.import_tabs = ImportTabs(self.notebook)
         numbering = ttk.LabelFrame(self.wire_tab, text='ネットの初出順に001〜999を割当。同じネットは線番を共有。未設定は保留します。', padding=10)
         numbering.pack(fill='x', padx=10)
@@ -254,6 +256,7 @@ class Application:
                 messagebox.showerror('設定保存エラー', f'{self.settings_path}\n{exc}', parent=self.root)
                 return False
             self.include_single_terminal = value
+            self.nets_tab.show(self.wires, self.import_result, value)
             return True
         return SettingsDialog(self.root, self.include_single_terminal, apply)
 
@@ -288,11 +291,6 @@ class Application:
             self.notebook.select(self.import_tabs.diagnostic_frame)
             self.status.set(f'管理情報にない目印付き線番テキスト {len(marker_warnings)}件を検出しました。不足・警告を確認してください。')
 
-    def set_wiring_prefix(self, key, prefix):
-        self.settings().wire_prefixes[key] = prefix
-        self.changed()
-        self.status.set('接頭辞を変更しました。採番ボタンで線番へ反映してください。')
-
     def set_wiring_type(self, key, enabled):
         self.settings().wire_types[key] = enabled
         clear_excluded_numbers(self.wires, self.settings())
@@ -321,7 +319,8 @@ class Application:
         return self.numbering_settings
 
     def refresh(self):
-        self.wiring_tab.show(self.settings().wire_types, self.settings().net_wire_types, self.settings().wire_prefixes)
+        self.nets_tab.show(self.wires, self.import_result, self.include_single_terminal)
+        self.wiring_tab.show(self.settings().wire_types, self.settings().net_wire_types)
         self.table.delete(*self.table.get_children())
         for wire in self.wires:
             self.table.insert('', 'end', iid=wire.wire_id, values=[display_net_name(wire.net_name) if c == 'net_name' else getattr(wire, c) for c in self.columns])
@@ -470,6 +469,7 @@ class Application:
         self.import_generation += 1
         self.import_result = None
         self.import_tabs.clear()
+        self.nets_tab.show(self.wires, include_single_terminal=self.include_single_terminal)
         self.wiring_tab.show({}, {})
         self.notebook.select(self.wire_tab)
 

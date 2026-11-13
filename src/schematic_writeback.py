@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from kicad_import import children, discover, import_folder, parse_schematic, serialize, value
 from schematic_annotations import TextEdit, edit_texts, first, placement_candidates, uid, unmanaged_marker_warnings, marked_text_ids, MARKER_GROUP
-from wire_model import valid_number, net_prefix, TextAnnotation, validate_annotations, display_net_name
+from wire_model import TextAnnotation, validate_annotations, display_net_name
 from wiring_types import excluded_nets
 
 
@@ -117,13 +117,12 @@ def prepare_writeback(imported, wires, settings, annotations, project_path, recr
     numbers, number_nets = {}, {}
     for wire in wires:
         n = wire.number
-        net_prefix(settings, wire.net_name)
         if wire.net_name in excluded:
             if n:
                 raise ValueError('採番対象外のネットに線番が残っています。採番を実行してください。')
             continue
-        if not wire.net_name.strip() or not valid_number(n):
-            raise ValueError('全ネットを任意の英字1文字と001〜999で採番してから書込んでください。')
+        if not wire.net_name.strip() or len(n) != 3 or not n.isascii() or not n.isdigit() or n == '000':
+            raise ValueError('全ネットを001〜999で採番してから書込んでください。')
         if wire.net_name in numbers and numbers[wire.net_name] != n:
             raise ValueError('同じネットの線番が一致していません。')
         if n in number_nets and number_nets[n] != wire.net_name:
