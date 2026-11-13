@@ -218,6 +218,46 @@ def prepare_writeback(imported, wires, settings, annotations, project_path, recr
     return WritePlan(imported, project_path, originals, updates, updated_annotations, edits, list(dict.fromkeys(warnings)), marker_additions)
 
 
+def prepare_delete_all(imported, wires, settings, annotations, project_path):
+    pending = pending_transactions(imported.folder)
+    if pending:
+        raise RecoveryRequired(pending[0])
+    if imported.diagnostics:
+        raise ValueError('取込時の不足・警告を解消してから削除してください。')
+    check_sources(imported)
+    validate_annotations(annotations)
+    settings.validate()
+    project_path = Path(project_path).resolve()
+    if project_path.suffix.lower() != '.json' or not project_path.is_file():
+        raise ValueError('先にプロジェクトJSONを保存してください。')
+    if project_path.is_relative_to(imported.folder / 'backup'):
+        raise ValueError('バックアップ内のJSONを更新先には指定できません。')
+    originals = {path: path.read_bytes() for path in imported.sheets}
+    originals[project_path] = project_path.read_bytes()
+    managed = defaultdict(set)
+    retained = []
+    for annotation in annotations:
+        path = (imported.folder / annotation.sheet).resolve()
+        if path.is_relative_to(imported.folder) and path in imported.sheets:
+            managed[path].add(annotation.text_uuid)
+        else:
+            retained.append(annotation)
+    edits, updates = [], {}
+    for path, sheet in imported.sheets.items():
+        identifiers = managed[path] | marked_text_ids(sheet.node)
+        operations = [TextEdit(path, '', None, uid(text), value(text[1]))
+                      for text in children(sheet.node, 'text') if uid(text) in identifiers]
+        edits.extend(operations)
+        content = edit_texts(originals[path], operations)
+        if content != originals[path]:
+            updates[path] = content
+    payload = {'version': 3, 'wires': [asdict(w) for w in wires],
+               'numbering': asdict(settings), 'annotations': [asdict(a) for a in retained]}
+    if json.loads(originals[project_path].decode('utf-8-sig')) != payload:
+        updates[project_path] = json.dumps(payload, ensure_ascii=False, indent=2).encode('utf-8')
+    return WritePlan(imported, project_path, originals, updates, retained, edits, [])
+
+
 def net_signature(imported):
     return sorted((net.root, net.name, tuple(sorted((t.device, t.pin) for t in net.terminals))) for net in imported.nets)
 

@@ -13,7 +13,7 @@ from wiring_types import collect_wiring_types, clear_excluded_numbers, excluded_
 from wiring_types_tab import WiringTypesTab
 from settings_dialog import SettingsDialog
 from app_settings import default_settings_path, load_settings, save_settings
-from schematic_writeback import prepare_writeback, execute_writeback, MissingAnnotations, UnmanagedMarkedTexts, RecoveryRequired, recover_transaction
+from schematic_writeback import prepare_delete_all, prepare_writeback, execute_writeback, MissingAnnotations, UnmanagedMarkedTexts, RecoveryRequired, recover_transaction
 from schematic_annotations import unmanaged_marker_warnings
 
 
@@ -43,6 +43,7 @@ class Application:
         self.import_button.pack(side='left', padx=3)
         self.write_button = ttk.Button(toolbar, text='回路図へ書込', command=self.write_schematic)
         self.write_button.pack(side='left', padx=3)
+        ttk.Button(toolbar, text='書込済み線番を全削除', command=lambda: self.write_schematic(delete_all=True)).pack(side='left', padx=3)
         for title, command in [('新規', self.new), ('開く', self.open),
                                ('保存', self.save), ('名前を付けて保存', lambda: self.save(True)),
                                ('CSV出力', self.export), ('設定', self.open_settings)]:
@@ -127,7 +128,7 @@ class Application:
         threading.Thread(target=work, daemon=True).start()
         self.root.after(100, poll)
 
-    def write_schematic(self, recreate_missing=False, delete_unmanaged=False):
+    def write_schematic(self, recreate_missing=False, delete_unmanaged=False, delete_all=False):
         if self.import_result is None:
             messagebox.showinfo('回路図書込', '先に回路図フォルダーを取り込んでください。', parent=self.root)
             return
@@ -172,7 +173,7 @@ class Application:
         def preview(plan):
             self.import_tabs.set_diagnostics(plan.warnings)
             if not plan.updates:
-                text = '変更する線番テキストはありません。'
+                text = '削除する線番テキストはありません。' if delete_all else '変更する線番テキストはありません。'
                 if plan.warnings:
                     self.notebook.select(self.import_tabs.diagnostic_frame)
                     text += '\n\n対象外・警告:\n' + '\n'.join(plan.warnings[:12])
@@ -193,15 +194,17 @@ class Application:
                 text += f'\n専用グループの目印追加: {plan.marker_additions}箇所'
             if warning_text:
                 text += '\n\n対象外・警告:\n' + warning_text
-            if not messagebox.askyesno('書込内容の確認', text + '\n\n実行しますか？', parent=self.root):
+            if delete_all:
+                text = '書込済み線番を全削除します。通常テキスト・ネットラベル・電線データ・採番結果は保持します。\n\n' + text
+            if not messagebox.askyesno('全削除内容の確認' if delete_all else '書込内容の確認', text + '\n\n実行しますか？', parent=self.root):
                 return
             def completed(backup):
                 self.annotations = plan.annotations
                 self.clean()
-                self.status.set(f'回路図への線番書込が完了しました。バックアップ: {backup}')
+                self.status.set(f'線番テキストの削除が完了しました。バックアップ: {backup}' if delete_all else f'回路図への線番書込が完了しました。バックアップ: {backup}')
                 messagebox.showinfo('書込完了', f'バックアップ: {backup}', parent=self.root)
             self.run_write_task(lambda: execute_writeback(plan), completed, failure)
-        self.run_write_task(lambda: prepare_writeback(imported, wires, settings, annotations, self.path, recreate_missing, delete_unmanaged), preview, failure)
+        self.run_write_task(lambda: prepare_delete_all(imported, wires, settings, annotations, self.path) if delete_all else prepare_writeback(imported, wires, settings, annotations, self.path, recreate_missing, delete_unmanaged), preview, failure)
 
     def import_kicad(self):
         folder = filedialog.askdirectory(parent=self.root, title='回路図を含むフォルダーを選択（サブフォルダーも検索）')
