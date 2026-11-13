@@ -51,7 +51,7 @@ class Application:
         self.notebook.pack(fill='both', expand=True, padx=10)
         self.wire_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.wire_tab, text='電線一覧')
-        self.wiring_tab = WiringTypesTab(self.notebook, self.set_wiring_type)
+        self.wiring_tab = WiringTypesTab(self.notebook, self.set_wiring_type, self.set_wiring_prefix)
         self.import_tabs = ImportTabs(self.notebook)
         numbering = ttk.LabelFrame(self.wire_tab, text='ネットの初出順に001〜999を割当。同じネットは線番を共有。未設定は保留します。', padding=10)
         numbering.pack(fill='x', padx=10)
@@ -285,6 +285,11 @@ class Application:
             self.notebook.select(self.import_tabs.diagnostic_frame)
             self.status.set(f'管理情報にない目印付き線番テキスト {len(marker_warnings)}件を検出しました。不足・警告を確認してください。')
 
+    def set_wiring_prefix(self, key, prefix):
+        self.settings().wire_prefixes[key] = prefix
+        self.changed()
+        self.status.set('接頭辞を変更しました。採番ボタンで線番へ反映してください。')
+
     def set_wiring_type(self, key, enabled):
         self.settings().wire_types[key] = enabled
         clear_excluded_numbers(self.wires, self.settings())
@@ -313,7 +318,7 @@ class Application:
         return self.numbering_settings
 
     def refresh(self):
-        self.wiring_tab.show(self.settings().wire_types, self.settings().net_wire_types)
+        self.wiring_tab.show(self.settings().wire_types, self.settings().net_wire_types, self.settings().wire_prefixes)
         self.table.delete(*self.table.get_children())
         for wire in self.wires:
             self.table.insert('', 'end', iid=wire.wire_id, values=[display_net_name(wire.net_name) if c == 'net_name' else getattr(wire, c) for c in self.columns])

@@ -1,4 +1,5 @@
 """Physical wire records, numbering, and portable project files."""
+import re
 import csv
 import json
 import os
@@ -32,11 +33,17 @@ class Numbering:
     prefix: str = ''
     start: int = 1
     digits: int = 3
+    wire_prefixes: dict = field(default_factory=dict)
     wire_types: dict = field(default_factory=dict)
     net_wire_types: dict = field(default_factory=dict)
 
     def validate(self):
         validate_wiring_settings(self.wire_types, self.net_wire_types)
+        if not isinstance(self.wire_prefixes, dict):
+            raise ValueError('接頭辞の設定が不正です。')
+        for kind, prefix in self.wire_prefixes.items():
+            if kind not in self.wire_types or not isinstance(prefix, str) or not re.fullmatch('[A-Za-z]?', prefix):
+                raise ValueError('接頭辞は半角アルファベット1文字または空欄で指定してください。')
         if not isinstance(self.prefix, str):
             raise ValueError('接頭辞は文字列で指定してください。')
         if type(self.start) is not int or self.start < 0:
@@ -53,6 +60,20 @@ class TextAnnotation:
     last_written_number: str
 
 
+def valid_number(number):
+    return isinstance(number, str) and re.fullmatch(r'[A-Za-z]?[0-9]{3}', number) is not None and number[-3:] != '000'
+
+
+def net_prefix(settings, net):
+    if settings is None:
+        return ''
+    prefixes = {settings.wire_prefixes.get(kind, '') for kind in settings.net_wire_types.get(net, [])}
+    if len(prefixes) > 1:
+        values = ', '.join(repr(p) if p else '接頭辞なし' for p in sorted(prefixes))
+        raise ValueError(f'ネット「{display_net_name(net)}」の接頭辞が不一致です: {values}')
+    return next(iter(prefixes), '')
+
+
 def validate_annotations(annotations):
     seen = set()
     for annotation in annotations:
@@ -65,8 +86,8 @@ def validate_annotations(annotations):
         except ValueError as exc:
             raise ValueError('線番テキストのUUIDが不正です。') from exc
         number = annotation.last_written_number
-        if len(number) != 3 or not number.isascii() or not number.isdigit() or number == '000':
-            raise ValueError('前回書込線番は001〜999で指定してください。')
+        if not valid_number(number):
+            raise ValueError('前回書込線番は任意の英字1文字と001〜999で指定してください。')
         key = (annotation.sheet, identifier)
         if key in seen:
             raise ValueError('同じシートのテキストUUIDが重複しています。')
@@ -89,8 +110,8 @@ def issues(wires, include_unnumbered=True, settings=None):
         if include_unnumbered:
             if not wire.net_name.strip():
                 result.append(f'{i}行目: ネット名が未設定です。')
-            elif len(wire.number) != 3 or not wire.number.isascii() or not wire.number.isdigit() or wire.number == '000':
-                result.append(f'{i}行目: 線番は001〜999の3桁で採番してください。')
+            elif not valid_number(wire.number):
+                result.append(f'{i}行目: 線番は任意の英字1文字と001〜999で採番してください。')
             else:
                 if wire.net_name in net_numbers and net_numbers[wire.net_name] != wire.number:
                     result.append(f'{i}行目: 同じネットに異なる線番があります。')
@@ -109,7 +130,7 @@ def assign_numbers(wires, settings=None):
     nets = dict.fromkeys(w.net_name for w in wires if w.net_name.strip() and w.net_name not in excluded)
     if len(nets) > 999:
         raise ValueError('ネット数が999を超えるため採番できません。データは変更していません。')
-    numbers = {net: f'{i:03d}' for i, net in enumerate(nets, 1)}
+    numbers = {net: net_prefix(settings, net) + f'{i:03d}' for i, net in enumerate(nets, 1)}
     count = clear_excluded_numbers(wires, settings) if settings else 0
     for wire in wires:
         if wire.net_name in numbers and wire.number != numbers[wire.net_name]:

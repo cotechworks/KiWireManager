@@ -6,8 +6,10 @@ from wiring_types import WiringType
 
 
 class WiringTypesTab:
-    def __init__(self, notebook, changed):
+    def __init__(self, notebook, changed, prefix_changed=None):
         self.changed = changed
+        self.prefix_changed = prefix_changed
+        self.prefix_variables = {}
         self.variables, self.checks = {}, {}
         self.frame = ttk.Frame(notebook, padding=10)
         notebook.add(self.frame, text='配線の種類')
@@ -28,11 +30,13 @@ class WiringTypesTab:
         self.summary = tk.StringVar()
         ttk.Label(self.frame, textvariable=self.summary).pack(anchor='w', pady=(8, 0))
 
-    def show(self, types, mapping):
+    def show(self, types, mapping, prefixes=None):
+        prefixes = prefixes or {}
+        self.prefix_variables = {}
         for child in self.rows.winfo_children():
             child.destroy()
         self.variables, self.checks = {}, {}
-        for column, title in enumerate(('採番対象', '線のスタイル', '線幅', '線の色', 'ネット数')):
+        for column, title in enumerate(('採番対象', '線のスタイル', '線幅', '線の色', 'ネット数', '接頭辞（英字1文字・空欄可）')):
             ttk.Label(self.rows, text=title).grid(row=0, column=column, sticky='w', padx=8, pady=4)
             self.rows.columnconfigure(column, weight=1 if column in (1, 2, 3) else 0)
         for row, (key, enabled) in enumerate(types.items(), 1):
@@ -46,5 +50,11 @@ class WiringTypesTab:
             count = sum(key in kinds for kinds in mapping.values())
             for column, label in enumerate((*WiringType.from_key(key).labels, count), 1):
                 ttk.Label(self.rows, text=label).grid(row=row, column=column, sticky='w', padx=8, pady=4)
+            prefix = tk.StringVar(value=prefixes.get(key, ''))
+            self.prefix_variables[key] = prefix
+            validate = self.rows.register(lambda value: not value or (len(value) == 1 and value.isascii() and value.isalpha()))
+            entry = ttk.Entry(self.rows, textvariable=prefix, width=5, validate='key', validatecommand=(validate, '%P'))
+            entry.grid(row=row, column=5, sticky='w', padx=8, pady=4)
+            prefix.trace_add('write', lambda *args, kind=key, state=prefix: self.prefix_changed(kind, state.get()) if self.prefix_changed else None)
         unknown = sum(not kinds for kinds in mapping.values())
         self.summary.set(f'配線の種類 {len(types)}件 / 種類を特定できないネット {unknown}件')
