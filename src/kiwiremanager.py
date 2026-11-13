@@ -389,8 +389,10 @@ class Application:
             self.refresh()
             self.clear()
             self.status.set('同一ネットの全電線へ反映しました。手入力線番は自動採番でも維持します。')
+            return True
         except ValueError as exc:
             messagebox.showerror('線番を反映できません', str(exc), parent=self.root)
+            return False
 
     def number(self):
         try:

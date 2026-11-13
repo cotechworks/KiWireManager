@@ -50,7 +50,10 @@ class NetsTab:
         editor.pack(fill='x', pady=8)
         ttk.Label(editor, text='固定線番（例：P24）').pack(side='left')
         self.number = tk.StringVar()
-        ttk.Entry(editor, textvariable=self.number, width=20).pack(side='left', padx=8)
+        self.number_entry = ttk.Entry(editor, textvariable=self.number, width=20)
+        self.number_entry.pack(side='left', padx=8)
+        self.number_entry.bind('<Return>', self.apply_on_enter)
+        self.number_entry.bind('<KP_Enter>', self.apply_on_enter)
         ttk.Button(editor, text='線番を反映', command=self.apply).pack(side='left')
         ttk.Button(editor, text='残りのネットを採番', command=number_all).pack(side='left', padx=8)
         self.table = ttk.Treeview(self.frame, columns=('name','number','wires','terminals','state','root'), show='headings')
@@ -78,5 +81,25 @@ class NetsTab:
 
     def apply(self):
         selection = self.table.selection()
-        if self.changed:
-            self.changed(self.keys[selection[0]] if selection else None, self.number.get().strip())
+        if not self.changed:
+            return
+        target_key = None
+        if selection:
+            rows = list(self.table.get_children())
+            index = rows.index(selection[0])
+            target_key = self.keys[rows[min(index + 1, len(rows) - 1)]]
+        succeeded = self.changed(self.keys[selection[0]] if selection else None, self.number.get().strip())
+        if succeeded is True and target_key is not None:
+            target = next((row for row, key in self.keys.items() if key == target_key), None)
+            if target is not None:
+                self.table.selection_set(target)
+                self.table.focus(target)
+                self.table.see(target)
+                self.select()
+                self.number_entry.focus_set()
+                self.number_entry.selection_range(0, 'end')
+
+    def apply_on_enter(self, event=None):
+        if self.table.selection():
+            self.apply()
+        return 'break'
