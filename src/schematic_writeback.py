@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from kicad_import import children, discover, import_folder, parse_schematic, serialize, value
-from schematic_annotations import TextEdit, edit_texts, first, placement_candidates, uid, unmanaged_marker_warnings, marked_text_ids, MARKER_GROUP
+from schematic_annotations import TextEdit, edit_texts, first, placement_candidates, uid, unmanaged_marker_warnings, marked_text_ids, is_marker_group, MARKER_GROUP
 from wire_model import valid_number, TextAnnotation, validate_annotations, display_net_name
 from wiring_types import excluded_nets
 
@@ -139,8 +139,6 @@ def prepare_writeback(imported, wires, settings, annotations, project_path, recr
         if not path.is_relative_to(imported.folder) or path not in imported.sheets:
             raise ValueError(f'管理対象シートが取込範囲外、または存在しません: {annotation.sheet}')
         key = (path, annotation.net_key)
-        if key in managed:
-            raise ValueError('同じネット・シートに複数の管理テキストがあります。')
         managed.add(key)
         if annotation.net_key in excluded:
             text_nodes = [n for n in children(imported.sheets[path].node, 'text') if uid(n) == annotation.text_uuid]
@@ -198,7 +196,7 @@ def prepare_writeback(imported, wires, settings, annotations, project_path, recr
     for edit in edits:
         grouped[edit.sheet].append(edit)
     for path, sheet in imported.sheets.items():
-        if any(len(g) > 1 and value(g[1]) == MARKER_GROUP for g in children(sheet.node, 'group')):
+        if any(len(g) > 1 and is_marker_group(value(g[1])) for g in children(sheet.node, 'group')):
             grouped.setdefault(path, [])
     marker_additions = sum(e.number is not None and e.text_uuid not in marked_text_ids(imported.sheets[e.sheet].node)
                            for e in edits)

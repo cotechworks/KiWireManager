@@ -11,13 +11,17 @@ from wire_model import TextAnnotation, validate_annotations
 
 MARKER_GROUP = 'KiWireManager.WireNumber/v1'
 
+def is_marker_group(name):
+    return 'KiWireManager.WireNumber' in name
+
+
 
 def marked_text_ids(node):
     """Discover all existing texts in our groups without consulting project JSON."""
     items = {uid(item): item for item in node if isinstance(item, list) and uid(item)}
     result = set()
     for group in children(node, 'group'):
-        if len(group) < 2 or value(group[1]) != MARKER_GROUP:
+        if len(group) < 2 or not is_marker_group(value(group[1])):
             continue
         for identifier in first(group, 'members', ['members'])[1:]:
             identifier = value(identifier)
@@ -29,6 +33,18 @@ def marked_text_ids(node):
             if identifier in result:
                 raise ValueError('同じ線番テキストが複数の専用グループに登録されています。')
             result.add(identifier)
+    return result
+
+
+def unregistered_marked_texts(imported, annotations):
+    managed = {(a.sheet, a.text_uuid) for a in annotations}
+    result = []
+    for path, sheet in imported.sheets.items():
+        relative = path.relative_to(imported.folder).as_posix()
+        identifiers = marked_text_ids(sheet.node)
+        for text in children(sheet.node, 'text'):
+            if uid(text) in identifiers and (relative, uid(text)) not in managed:
+                result.append((relative, uid(text), value(text[1])))
     return result
 
 
@@ -336,7 +352,7 @@ def edit_texts(original, edits):
     marked = set()
     for start, end, group in groups:
         members = [value(t) for t in first(group, 'members', ['members'])[1:]]
-        if value(group[1]) != MARKER_GROUP:
+        if not is_marker_group(value(group[1])):
             if targets.intersection(members) or removed.intersection(members):
                 raise ValueError('対象の線番テキストが利用者のグループに所属しています。KiCadでグループ解除後に再取込してください。')
             continue

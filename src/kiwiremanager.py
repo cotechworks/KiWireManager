@@ -6,7 +6,7 @@ from copy import deepcopy
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from wire_model import set_net_number, Numbering, Wire, assign_numbers, export_csv, issues, load_project, save_project, display_net_name
+from wire_model import TextAnnotation, valid_number, set_net_number, Numbering, Wire, assign_numbers, export_csv, issues, load_project, save_project, display_net_name
 from kicad_import import import_folder, merge_imported_wires
 from kicad_dialog import ImportTabs
 from wiring_types import collect_wiring_types, clear_excluded_numbers, excluded_nets
@@ -15,7 +15,8 @@ from nets_tab import NetsTab
 from settings_dialog import SettingsDialog
 from app_settings import default_settings_path, load_settings, save_settings
 from schematic_writeback import prepare_delete_all, prepare_writeback, execute_writeback, MissingAnnotations, UnmanagedMarkedTexts, RecoveryRequired, recover_transaction
-from schematic_annotations import unmanaged_marker_warnings
+from schematic_annotations import unregistered_marked_texts, unmanaged_marker_warnings
+from marker_dialog import DECLINE_ALL, choose_net
 
 
 class Application:
@@ -145,12 +146,7 @@ class Application:
             if isinstance(error, UnmanagedMarkedTexts):
                 self.import_tabs.set_diagnostics(error.warnings)
                 self.notebook.select(self.import_tabs.diagnostic_frame)
-                details = '\n'.join(error.warnings[:12])
-                if len(error.warnings) > 12:
-                    details += f'\nほか{len(error.warnings)-12}件（不足・警告タブに表示）'
-                if messagebox.askokcancel('管理情報にない線番テキストの削除',
-                        f'JSONにない目印付きテキスト {len(error.warnings)}件を削除して処理を続けますか？\n\n{details}\n\n削除は書込内容の確認後、バックアップを取って反映します。', parent=self.root):
-                    self.write_schematic(recreate_missing=recreate_missing, delete_unmanaged=True)
+                messagebox.showwarning('未登録の管理テキスト', '追加しなかったテキストは保持しています。再取込して管理対象への追加を確認してください。', parent=self.root)
                 return
             if isinstance(error, MissingAnnotations):
                 if messagebox.askyesno('削除された線番テキスト', f'{error}\n\n再作成しますか？', parent=self.root):
@@ -280,6 +276,9 @@ class Application:
         removed = clear_excluded_numbers(self.wires, self.settings())
         if added or removed:
             self.changed()
+        if self.register_copied_markers(result):
+            self.changed()
+        marker_warnings = unmanaged_marker_warnings(result, self.annotations)
         incomplete = [net for net in nets if len(net.terminals) < 2]
         messages = [f'接続先未確定（{len(net.terminals)}端子）: {net.root} / {net.name}' for net in incomplete]
         self.import_tabs.show_result(result, messages + wiring_warnings + marker_warnings)
@@ -290,6 +289,25 @@ class Application:
         if marker_warnings:
             self.notebook.select(self.import_tabs.diagnostic_frame)
             self.status.set(f'管理情報にない目印付き線番テキスト {len(marker_warnings)}件を検出しました。不足・警告を確認してください。')
+
+    def register_copied_markers(self, imported):
+        numbers = {}
+        for wire in self.wires:
+            if wire.net_name.strip():
+                numbers.setdefault(wire.net_name, set()).add(wire.number)
+        changed = False
+        for sheet, identifier, text in unregistered_marked_texts(imported, self.annotations):
+            matches = [key for key, values in numbers.items() if values == {text}]
+            selected = choose_net(self.root, sheet, identifier, text, numbers,
+                                  matches[0] if len(matches) == 1 else None)
+            if selected is DECLINE_ALL:
+                break
+            if selected is not None:
+                values = numbers[selected]
+                baseline = text if valid_number(text) else next((n for n in values if valid_number(n)), '001')
+                self.annotations.append(TextAnnotation(sheet, identifier, selected, baseline))
+                changed = True
+        return changed
 
     def set_wiring_type(self, key, enabled):
         self.settings().wire_types[key] = enabled

@@ -21,6 +21,7 @@ if errorlevel 1 (
 
 "%BUILD_PYTHON%" -m nuitka ^
     --mode=standalone ^
+    --include-windows-runtime-dlls=yes ^
     --follow-imports ^
     --enable-plugin=tk-inter ^
     --windows-console-mode=disable ^
@@ -28,6 +29,12 @@ if errorlevel 1 (
     --output-filename=KiWireManager.exe ^
     src\kiwiremanager.py
 if errorlevel 1 goto :failed
+
+if not exist "build\kiwiremanager.dist\vcruntime140.dll" (
+    echo ERROR: vcruntime140.dll was not bundled. Do not distribute this build.
+    echo Install the C++ Redistributable component in Visual Studio Installer and rebuild.
+    goto :failed
+)
 
 echo.
 echo Build succeeded: build\kiwiremanager.dist\KiWireManager.exe

@@ -89,29 +89,12 @@ try:
             assert error.called
             assert 'manual edit' in app.import_tabs.diagnostics.get('1.0', 'end')
         with patch('kiwiremanager.prepare_writeback', side_effect=UnmanagedMarkedTexts(['orphan'])), \
-                patch('kiwiremanager.messagebox.askokcancel', return_value=False) as confirm, \
+                patch('kiwiremanager.messagebox.showwarning') as warning, \
                 patch('kiwiremanager.execute_writeback') as execute:
             app.write_schematic()
             wait(root, app)
-            assert confirm.called
-            assert not execute.called
-        with patch('kiwiremanager.prepare_writeback', side_effect=[UnmanagedMarkedTexts(['orphan']), plan]) as prepare, \
-                patch('kiwiremanager.messagebox.askokcancel', return_value=True), \
-                patch('kiwiremanager.messagebox.askyesno', return_value=False), \
-                patch('kiwiremanager.execute_writeback') as execute:
-            app.write_schematic()
-            wait(root, app)
-            assert prepare.call_args.args[-1] is True
-            assert not execute.called, 'cancelling the final preview must not delete anything'
-        with patch('kiwiremanager.prepare_writeback', side_effect=[UnmanagedMarkedTexts(['orphan']), MissingAnnotations(['missing']), plan]) as prepare, \
-                patch('kiwiremanager.messagebox.askokcancel', return_value=True), \
-                patch('kiwiremanager.messagebox.askyesno', return_value=True), \
-                patch('kiwiremanager.messagebox.showinfo'), \
-                patch('kiwiremanager.execute_writeback', return_value=folder / 'backup') as execute:
-            app.write_schematic()
-            wait(root, app)
-            assert execute.called
-            assert [call.args[-2:] for call in prepare.call_args_list] == [(False, False), (False, True), (True, True)]
+            assert warning.called
+            assert not execute.called, 'unregistered copies must be preserved'
         with patch('kiwiremanager.prepare_writeback', side_effect=RecoveryRequired(folder / 'backup/writeback.json')), \
                 patch('kiwiremanager.recover_transaction') as recover, \
                 patch('kiwiremanager.messagebox.askyesno', return_value=True), \
