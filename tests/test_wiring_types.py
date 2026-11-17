@@ -44,20 +44,27 @@ class WiringTypeTests(unittest.TestCase):
         self.assertEqual([w.number for w in wires[:3]], ['', '', '001'])
         self.assertEqual(wires[-1].number, '999')
 
-    def test_csv_retains_excluded_rows_without_number_and_checks_endpoints(self):
+    def test_csv_excludes_disabled_nets_before_validation(self):
         import csv
         kind = WiringType().key
         settings = Numbering(wire_types={kind: False}, net_wire_types={'N': [kind]})
-        wire = Wire('J1', '1', 'J2', '2', net_name='N')
+        excluded = Wire(net_name='N', number='stale')
+        included = Wire('J1','1','J2','2','P24',net_name='M')
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'wires.csv'
-            export_csv(path, [wire], settings)
+            export_csv(path, [excluded,included], settings)
             with path.open(encoding='utf-8-sig', newline='') as stream:
-                self.assertEqual(list(csv.reader(stream))[1][1:3], ['', 'N'])
-            wire.number = '001'
-            self.assertTrue(issues([wire], settings=settings))
-            wire.number, wire.target_terminal = '', ''
-            self.assertTrue(issues([wire], settings=settings))
+                rows=list(csv.reader(stream))
+            self.assertEqual(len(rows),2)
+            self.assertEqual(rows[1][1:3],['P24','M'])
+            self.assertEqual(excluded.number,'stale')
+            included.target_terminal=''
+            before=path.read_bytes()
+            with self.assertRaises(ValueError): export_csv(path,[excluded,included],settings)
+            self.assertEqual(path.read_bytes(),before)
+            export_csv(path,[excluded],settings)
+            with path.open(encoding='utf-8-sig',newline='') as stream:
+                self.assertEqual(len(list(csv.reader(stream))),1)
 
     def test_settings_roundtrip_and_legacy_defaults(self):
         import json

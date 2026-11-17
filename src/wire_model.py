@@ -214,7 +214,13 @@ def load_project(path):
         raise ValueError('プロジェクト形式が不正です。') from exc
 
 
+def csv_wires(wires, settings=None):
+    excluded = excluded_nets(settings) if settings else set()
+    return [wire for wire in wires if wire.net_name not in excluded]
+
+
 def export_csv(path, wires, settings=None):
+    wires = csv_wires(wires, settings)
     errors = issues(wires, settings=settings)
     if errors:
         raise ValueError('\n'.join(errors))

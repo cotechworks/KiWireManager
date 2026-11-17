@@ -21,7 +21,9 @@ if errorlevel 1 (
 
 "%BUILD_PYTHON%" -m nuitka ^
     --mode=standalone ^
+    --mingw64 ^
     --include-windows-runtime-dlls=yes ^
+    --disable-cache=dll-dependencies ^
     --follow-imports ^
     --enable-plugin=tk-inter ^
     --windows-console-mode=disable ^

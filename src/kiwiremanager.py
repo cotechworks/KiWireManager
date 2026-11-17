@@ -6,7 +6,7 @@ from copy import deepcopy
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from wire_model import TextAnnotation, valid_number, set_net_number, Numbering, Wire, assign_numbers, export_csv, issues, load_project, save_project, display_net_name
+from wire_model import csv_wires, TextAnnotation, valid_number, set_net_number, Numbering, Wire, assign_numbers, export_csv, issues, load_project, save_project, display_net_name
 from kicad_import import import_folder, merge_imported_wires
 from kicad_dialog import ImportTabs
 from wiring_types import collect_wiring_types, clear_excluded_numbers, excluded_nets
@@ -480,7 +480,7 @@ class Application:
             return False
 
     def export(self):
-        errors = issues(self.wires, settings=self.settings())
+        errors = issues(csv_wires(self.wires, self.settings()), settings=self.settings())
         if errors:
             messagebox.showerror('CSV出力できません', '\n'.join(errors), parent=self.root)
             return

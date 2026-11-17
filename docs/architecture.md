@@ -194,3 +194,15 @@ T-027で利用者が基本操作・配置・バックアップ・再実行時の
 ## Windowsランタイム同梱ビルド（2026-11-17）
 
 Build.batはNuitkaの--include-windows-runtime-dlls=yesでVisual Studioの再配布DLLを収集し、standalone出力のvcruntime140.dllを検査する。供給元はVisual Studio 2022のVC/Redist/MSVC以下。ビルドPCにMicrosoft.VisualStudio.Component.VC.Redist.14.LatestとMicrosoft.VisualStudio.Component.VC.Tools.x86.x64を追加した。利用者環境への再頒布パッケージ導入を前提とせず、クリーン環境の検証は別途行う。
+
+## 採番対象外電線のCSV除外（2026-11-17・採用）
+
+利用者指定により、採番対象外ネットの電線をCSVに出力しない。既存のexcluded_nets判定を使用し、同一ネットの全種類がオフの場合のみ除外、種類不明ネットは対象に残す。画面の出力前検証とexport_csv本体の両方で出力対象行だけを検証する。対象外行の未採番・古い番号・端子情報不足は出力を妨げない。全行除外ならヘッダーのみ。JSONと登録電線は変更しない。
+
+### ビルド用コンパイラーの指定（2026-11-17）
+
+利用者指示によりBuild.batで--mingw64を指定し、Nuitka管理のMinGW64/GCCを使用する。MSVCによるコンパイルを選択しない。Visual Studioの再配布用DLLは引き続き同梱元として使用し、--include-windows-runtime-dlls=yesと出力DLLの検査は維持する。
+
+### DLL依存関係キャッシュの無効化（2026-11-17）
+
+GCC明示後のビルドでvcruntime140.dllが収集されない事象が発生した。供給元は存在しており、DLL依存キャッシュを無効化すると同梱を確認できたため、Build.batへ--disable-cache=dll-dependenciesを追加する。ccacheは維持し、DLL存在検査を削除・緩和しない。
